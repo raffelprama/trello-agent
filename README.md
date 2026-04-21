@@ -1,6 +1,6 @@
-# Trello AI Agent (LangGraph + FastAPI)
+# Trello AI Agent (LangGraph + FastAPI) — PRD v2
 
-Production-style agent that maps natural language to **Trello REST** calls (`get_boards`, `get_lists`, `get_cards`, `get_board_cards` for all lists on a board, `get_card_details` for one card’s description, labels, due/start dates, checklists, and members, `create_card`, `update_card`, `move_card`, optional `delete_card`) using **LangGraph** and **OpenAI** (`MODEL` in `.env`, e.g. `gpt-4.1`).
+Production-style agent that maps natural language to **Trello REST** calls across **boards, lists, cards, checklists, check items, comments, labels, members, and board actions** (`prd_v2.md`). It uses **LangGraph**, **OpenAI** (`MODEL` in `.env`, e.g. `gpt-4.1`), and a **session working memory** (CLI and optional `memory` on `POST /chat`) so follow-ups like “show me what’s under **Ai2**” resolve to the **card** Ai2 when that card appeared in the last listing.
 
 **Deleting cards** is controlled by **`DELETE_ITEM`** in `.env` (default `false`). When disabled, delete requests are blocked with an explanation; set `DELETE_ITEM=true` to allow `DELETE /1/cards/{id}`.
 
@@ -35,13 +35,30 @@ BOARD_SCOPE_ONLY=true   # optional: default true if TRELLO_BOARD_ID is set — o
 API_KEY=...             # OpenAI key
 MODEL=gpt-4.1
 DELETE_ITEM=false       # set true to allow delete_card (permanent card deletion)
+
+# Optional — stderr logging (see Observability below)
+# LOG_TRELLO_FULL=false
+# LOG_LLM_FULL=false
+# LOG_MAX_BODY_CHARS=16000
 ```
+
+### Observability (stderr)
+
+Every **Trello** call logs one **`[trello]`** line at **INFO**: method, path, HTTP status, duration, approximate JSON size, and list length or top-level dict keys. Set **`LOG_TRELLO_FULL=true`** in `.env` to also log full request JSON (for `POST`/`PUT`) and response bodies (truncated to **`LOG_MAX_BODY_CHARS`**).
+
+Every **LLM** step logs **`[llm]`** at **INFO**: operation name (`planner`, `answer_generator`, `reflection`), model, duration, and response size. Set **`LOG_LLM_FULL=true`** to log full prompts and responses (truncated). OpenAI’s **`httpx`** lines may still appear separately for the raw HTTP call.
+
+Use **`python cli.py --verbose`** so **`app.*`** loggers emit **DEBUG** (e.g. extra query param detail on Trello).
 
 With **`TRELLO_BOARD_ID`** set and **`BOARD_SCOPE_ONLY=true`** (the default in that case):
 
 - **`get_boards`** returns only that board.
 - All list/card actions use that board; asking for another board by name returns an error.
 - Set **`BOARD_SCOPE_ONLY=false`** if you still want to browse other boards while keeping **`TRELLO_BOARD_ID`** as the default when no board is named.
+
+## Session memory
+
+After each successful tool turn, the graph updates **`memory`**: `board_id`, `board_name`, `list_map`, **`last_cards`** (name + list + id), **`last_card_id`**, and optional **`pending_clarify`** after a clarification question. The planner receives a **memory summary** so phrases like “under Ai2” map to **`get_card_details`** when Ai2 was listed as a card in the previous turn.
 
 ## Run API
 
@@ -50,14 +67,14 @@ cd trello_agent
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### `POST /chat` (stateless)
+### `POST /chat`
 
-Optional fields: `auth` (reserved, ignored in MVP), `history` (client-managed prior turns), `id` (UUID echoed back).
+Optional fields: `auth` (reserved), `history` (prior turns), **`memory`** (client-managed working memory; echoed back updated), `id` (UUID echoed back).
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/chat ^
   -H "Content-Type: application/json" ^
-  -d "{\"question\": \"List my boards\", \"history\": []}"
+  -d "{\"question\": \"List my boards\", \"history\": [], \"memory\": null}"
 ```
 
 Example body:
@@ -66,7 +83,8 @@ Example body:
 {
   "question": "List my boards",
   "auth": null,
-  "history": ["user: hi", "assistant: Hello!"],
+  "history": [],
+  "memory": null,
   "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
 }
 ```
@@ -94,50 +112,55 @@ python cli.py --verbose   # DEBUG for app.* on stderr (more startup detail)
 
 Commands: `/quit`, `/reset`, `/history`, `/trace on|off`.
 
-CLI keeps **in-process** history and appends JSONL lines to `trello_agent/logs/cli_history.log` (for replay/training). The HTTP API does **not** use this file.
+CLI keeps **in-process** history **and session memory** across turns; it appends JSONL lines to `trello_agent/logs/cli_history.log` (for replay/training). The HTTP API is stateless except for the **`memory`** field you pass in.
 
 ## Example prompts (intents)
 
-| Intent | Example |
-|--------|---------|
-| get_boards | “What boards do I have?” |
-| get_lists | “Show lists on my board” (uses `TRELLO_BOARD_ID` or name) |
-| get_cards | “List cards in To Do on this board” (one list) |
-| get_board_cards | “Show every card on the board” / “all cards in there” (all lists) |
-| get_card_details | “Show me the Ai card” / “What’s the description and checklist on card X?” (one card; name matched on the board) |
-| create_card | “Create a card ‘Buy milk’ in To Do” |
-| update_card | “Set description of card X to …” |
-| move_card | “Move card X to Done” |
-| delete_card | “Delete card X” (requires `DELETE_ITEM=true`) |
+| Area | Intent examples |
+|------|-----------------|
+| Member | “Who am I on Trello?” → `get_member_me` |
+| Boards | “What boards do I have?” → `get_boards`; “Create board X” → `create_board` |
+| Lists | “Show lists” → `get_lists`; “Rename list A to B” → `update_list` |
+| Cards | “All cards on the board” → `get_board_cards`; “Cards in To Do” → `get_cards` |
+| Card detail | “Show card Ai2” / “What’s under Ai2” → `get_card_details` (uses **memory** when the name is a card) |
+| Move / edit | “Move card X to Done” → `move_card`; “Set due on X …” → `update_card` |
+| Checklists | “Checklists on card X” → `get_card_checklists`; “Check off item Y on checklist Z” → `check_item` |
+| Comments | “Comments on card X” → `get_comments`; “Comment on X: …” → `create_comment` |
+| Labels | “Labels on this board” → `get_board_labels`; “Add label L to card X” → `add_card_label` |
 
-Board/list names are resolved case-insensitively. Set `TRELLO_BOARD_ID` when you want a default board without naming it every time.
+Board/list/card names are resolved case-insensitively. If a name could be a **list or a card**, the agent **asks a short clarification** (per design). Set `TRELLO_BOARD_ID` when you want a default board without naming it every time.
 
 ## Architecture
 
 ### System overview
 
-The HTTP API is **stateless** (optional `history` in each request). The CLI keeps its own in-memory history and optional JSONL log; both paths invoke the same compiled LangGraph.
+The HTTP API is **stateless** except for optional **`memory`** per request. The CLI keeps in-memory history and memory; both paths invoke the same compiled LangGraph.
 
 ```mermaid
 flowchart TD
-    HttpClient[HTTP POST /chat] -->|optional history| FastAPI[FastAPI main.py]
-    Repl[CLI cli.py] --> CliHist[CLI history deque]
-    CliHist --> LangGraph[LangGraph compiled graph]
+    HttpClient[HTTP POST /chat] -->|optional history + memory| FastAPI[FastAPI main.py]
+    Repl[CLI cli.py] --> LangGraph[LangGraph compiled graph]
     FastAPI --> LangGraph
     LangGraph --> TrelloAPI[Trello REST API]
 ```
 
-### LangGraph topology
+### LangGraph topology (v2)
 
-Nodes live under `app/graph.py` and `app/nodes/`. Flow: plan intent and entities, resolve names to Trello IDs, route to the right REST call, execute, normalize the response, generate a natural-language answer, then evaluate. On **success** the run ends; on **retry** (up to `MAX_EVAL_RETRIES` in `app/config.py`) control returns to `tool_router`; on **give up** the **reflection** node produces a graceful explanation.
+Flow: **plan** → (**clarify** if needed) → **resolve entities** → (**clarify** if ambiguous) → route → execute → observe → answer → evaluate. On **success** the run ends; on **retry** control returns to `tool_router`; on **give up** → **reflection**. The **clarify** node ends the turn with a question (no tool call).
 
 ```mermaid
 flowchart TD
     Start([START]) --> Planner[normalize_intent_planner]
-    Planner --> EntityResolver[entity_resolver]
-    EntityResolver --> RoutePlanner{skip_tools?}
-    RoutePlanner -->|yes| Reflection[reflection_node]
-    RoutePlanner -->|no| ToolRouter[tool_router]
+    Planner --> RouteP{needs_clarification?}
+    RouteP -->|yes| Clarify[clarify]
+    RouteP -->|no| RouteSkipP{skip_tools?}
+    RouteSkipP -->|yes| Reflection[reflection_node]
+    RouteSkipP -->|no| EntityResolver[entity_resolver]
+    EntityResolver --> RouteE{needs_clarification?}
+    RouteE -->|yes| Clarify
+    RouteE -->|no| RouteSkipE{skip_tools?}
+    RouteSkipE -->|yes| Reflection
+    RouteSkipE -->|no| ToolRouter[tool_router]
     ToolRouter --> ToolExecutor[tool_executor]
     ToolExecutor --> ToolObserver[tool_observer]
     ToolObserver --> AnswerGen[answer_generator]
@@ -147,24 +170,28 @@ flowchart TD
     RouteEval -->|retry| ToolRouter
     RouteEval -->|giveup| Reflection
     Reflection --> EndReflect([END])
+    Clarify --> EndClarify([END])
     ToolExecutor -.-> Trello[(Trello API)]
     EntityResolver -.-> Trello
 ```
+
+**HTTP execution** is implemented under `app/tools/` (member, board, list, card, checklist, action, label) and `app/trello_client.py` (rolling **rate limit** ~100 req / 10s, **429 Retry-After**, retries on 5xx).
 
 **Node roles (short):**
 
 | Node | Role |
 |------|------|
-| `normalize_intent_planner` | LLM: intent + `entities` (JSON via structured output) |
-| `entity_resolver` | Maps board/list/card names to IDs; uses `TRELLO_BOARD_ID` when appropriate |
-| `tool_router` | Maps intent → Trello operation payload (`delete_card` only if `DELETE_ITEM=true`) |
-| `tool_executor` | Calls `app/trello_client.py` (HTTP, timeouts, retries on 5xx) |
-| `tool_observer` | Shrinks raw JSON for the answer LLM |
-| `answer_generator` | LLM: user-facing reply from `parsed_response` + `question` + `history` |
-| `evaluation` | HTTP / error checks; routes to retry, end, or reflection |
-| `reflection_node` | LLM: explains failures when tools are skipped or max retries exceeded |
+| `normalize_intent_planner` | LLM: intent + `entities` + optional clarification; uses **memory** summary |
+| `entity_resolver` | Maps names to IDs; list/card **ambiguity** → clarify |
+| `clarify` | Surfaces a clarification question; **END** |
+| `tool_router` | Maps intent → `selected_tool` + payload |
+| `tool_executor` | Dispatches to `app/tools/*` + `TrelloClient` |
+| `tool_observer` | Normalizes JSON for the answer LLM |
+| `answer_generator` | LLM: reply from `parsed_response` |
+| `evaluation` | HTTP / error checks; retry or reflection |
+| `reflection_node` | LLM: explains failures |
 
-For the full product spec and state fields, see [`prd.md`](prd.md).
+See [`prd_v2.md`](prd_v2.md) for the full API hierarchy and flows.
 
 ## Security
 

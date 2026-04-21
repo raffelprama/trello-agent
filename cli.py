@@ -14,6 +14,7 @@ if str(_pkg_root) not in sys.path:
 
 from app.cli_history import append_turn, clear_history, format_history_for_display, get_history_lines
 from app.logging_setup import setup_logging
+from app.session_memory import empty_memory
 
 
 def main() -> None:
@@ -50,6 +51,7 @@ def main() -> None:
 
     trace_on = trace
     _loaded_agent = False
+    memory: dict = empty_memory()
 
     while True:
         try:
@@ -64,7 +66,8 @@ def main() -> None:
             break
         if line == "/reset":
             clear_history(session)
-            print("History cleared.")
+            memory = empty_memory()
+            print("History and session memory cleared.")
             continue
         if line == "/history":
             print(format_history_for_display(session))
@@ -95,21 +98,49 @@ def main() -> None:
 
         from app.graph import invoke_agent
 
-        out = invoke_agent(line, hist)
+        out = invoke_agent(line, hist, memory=memory)
         answer = out.get("answer") or ""
+        memory = out.get("memory") if isinstance(out.get("memory"), dict) else memory
 
         append_turn(session, "assistant", answer)
         print(c(answer, "0"))
 
-        if trace_on:
-            ev = out.get("evaluation_result") or {}
+        parsed = out.get("parsed_response") or {}
+        ev = out.get("evaluation_result") or {}
+        ent = out.get("entities") or {}
+        err_msg = (out.get("error_message") or "").strip()
+        clarification = isinstance(parsed, dict) and parsed.get("clarification")
+
+        if trace_on and (clarification or out.get("needs_clarification")):
+            amb = out.get("ambiguous_entities") or {}
             print(
                 c(
-                    f"  [trace] intent={out.get('intent')} tool={out.get('selected_tool')} "
-                    f"eval={ev.get('status')} retries={out.get('evaluation_retry_count')}",
+                    f"  [trace] clarify=true intent={out.get('intent')} "
+                    f"candidates={amb!s}",
                     "90",
                 )
             )
+
+        if trace_on:
+            # Build entity summary
+            parts: list[str] = [
+                f"intent={out.get('intent')}",
+                f"tool={out.get('selected_tool')}",
+                f"eval={ev.get('status')}",
+                f"retries={out.get('evaluation_retry_count')}",
+            ]
+            if ent.get("card_name") or ent.get("card_id"):
+                cid = str(ent.get("card_id") or "")
+                parts.append(f"card={ent.get('card_name')!r}({cid[:8]}{'...' if len(cid) > 8 else ''})")
+            if ent.get("list_name") or ent.get("list_id"):
+                parts.append(f"list={ent.get('list_name')!r}")
+            if ent.get("target_list_name") or ent.get("target_list_id"):
+                parts.append(f"target_list={ent.get('target_list_name')!r}")
+            if ent.get("resolved_board_name"):
+                parts.append(f"board={ent.get('resolved_board_name')!r}")
+            if err_msg:
+                parts.append(f"err={err_msg[:80]!r}")
+            print(c("  [trace] " + " | ".join(parts), "90"))
         print()
 
     return None

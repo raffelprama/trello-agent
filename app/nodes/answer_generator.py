@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.llm import get_chat_model
+from app.llm import get_chat_model, invoke_chat_logged
 from app.state import ChatState
 
 logger = logging.getLogger(__name__)
@@ -39,11 +39,17 @@ Rules:
 - If "queried_board" is present, the lists/cards below are for that board only. Say that board name explicitly.
 - Do not name a board from history if it contradicts queried_board.
 - If cards is empty [], say there are no cards on that board (for the queried_board), not a board from prior chat.
-- If "card" is present (get_card_details), summarize description, labels, due/start dates, checklists (item names and complete/incomplete), and members from that object.
+- If "card" is present (get_card_details / mutations), summarize description, labels, due/start dates, checklists (item names and complete/incomplete), and members from that object.
+- If "checklists" / "checkItems" appear, list checklist names and item states clearly.
+- If "comments" / "actions" appear, summarize comment text and dates briefly.
+- If "labels" or "members" appear at top level, list them.
+- If "member" appears (get_member_me), give fullName and username.
+- If clarification is true in parsed data, the message is already the question — repeat it politely if needed.
 - Do not invent IDs."""
 
     try:
-        msg = llm.invoke(
+        msg = invoke_chat_logged(
+            llm,
             [
                 {
                     "role": "system",
@@ -54,6 +60,7 @@ Rules:
                 },
                 {"role": "user", "content": prompt},
             ],
+            operation="answer_generator",
         )
         text = getattr(msg, "content", str(msg))
         return {"answer": text or "Done."}

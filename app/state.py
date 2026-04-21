@@ -6,7 +6,7 @@ from typing import Any, TypedDict
 
 
 class ChatState(TypedDict, total=False):
-    """State flowing through the agent graph (PRD §5)."""
+    """State flowing through the agent graph (PRD v2)."""
 
     # Input
     question: str
@@ -17,6 +17,15 @@ class ChatState(TypedDict, total=False):
     intent: str
     entities: dict[str, Any]
     reasoning_trace: str
+
+    # Clarification (planner or resolver)
+    needs_clarification: bool
+    clarification_question: str
+    ambiguous_entities: dict[str, Any]
+    pending_op: dict[str, Any]
+
+    # Session working memory (cross-turn; CLI injects)
+    memory: dict[str, Any]
 
     # Execution
     selected_tool: str

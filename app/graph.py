@@ -1,7 +1,6 @@
 """LangGraph assembly for the Trello agent.
 
 Heavy imports (langgraph, nodes, langchain) load only on first invoke — not at import time.
-This keeps CLI startup fast so the REPL prompt appears immediately.
 """
 
 from __future__ import annotations
@@ -10,6 +9,7 @@ import logging
 import time
 from typing import Any, Literal
 
+from app.session_memory import finalize_turn_memory
 from app.state import ChatState
 
 logger = logging.getLogger(__name__)
@@ -17,13 +17,17 @@ logger = logging.getLogger(__name__)
 _compiled_graph: Any = None
 
 
-def route_after_planner(state: ChatState) -> Literal["entity_resolver", "reflection"]:
+def route_after_planner(state: ChatState) -> Literal["entity_resolver", "reflection", "clarify"]:
+    if state.get("needs_clarification"):
+        return "clarify"
     if state.get("skip_tools"):
         return "reflection"
     return "entity_resolver"
 
 
-def route_after_entity(state: ChatState) -> Literal["tool_router", "reflection"]:
+def route_after_entity(state: ChatState) -> Literal["tool_router", "reflection", "clarify"]:
+    if state.get("needs_clarification"):
+        return "clarify"
     if state.get("skip_tools"):
         return "reflection"
     return "tool_router"
@@ -59,7 +63,6 @@ def _build_graph():
         _elapsed(),
     )
 
-    # Import order: heavy LangChain nodes first so logs show where time goes.
     t = time.perf_counter()
     from app.nodes.planner import normalize_intent_planner
 
@@ -71,10 +74,11 @@ def _build_graph():
 
     t = time.perf_counter()
     from app.nodes.answer_generator import answer_generator
+    from app.nodes.clarify import clarify_node
     from app.nodes.reflection import reflection_node
 
     logger.info(
-        "[startup] imported answer_generator + reflection in %.0fms (total %.0fms)",
+        "[startup] imported answer_generator + clarify + reflection in %.0fms (total %.0fms)",
         (time.perf_counter() - t) * 1000,
         _elapsed(),
     )
@@ -102,17 +106,18 @@ def _build_graph():
     g.add_node("answer_generator", answer_generator)
     g.add_node("evaluation", evaluation)
     g.add_node("reflection", reflection_node)
+    g.add_node("clarify", clarify_node)
 
     g.set_entry_point("planner")
     g.add_conditional_edges(
         "planner",
         route_after_planner,
-        {"entity_resolver": "entity_resolver", "reflection": "reflection"},
+        {"entity_resolver": "entity_resolver", "reflection": "reflection", "clarify": "clarify"},
     )
     g.add_conditional_edges(
         "entity_resolver",
         route_after_entity,
-        {"tool_router": "tool_router", "reflection": "reflection"},
+        {"tool_router": "tool_router", "reflection": "reflection", "clarify": "clarify"},
     )
     g.add_edge("tool_router", "tool_executor")
     g.add_edge("tool_executor", "tool_observer")
@@ -124,6 +129,7 @@ def _build_graph():
         {"end": END, "tool_router": "tool_router", "reflection": "reflection"},
     )
     g.add_edge("reflection", END)
+    g.add_edge("clarify", END)
 
     logger.info(
         "[startup] wiring nodes/edges done in %.0fms (total %.0fms); compiling…",
@@ -154,6 +160,7 @@ _first_invoke_complete = False
 def invoke_agent(
     question: str,
     history: list[str] | None = None,
+    memory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the graph and return final state dict."""
     global _first_invoke_complete
@@ -161,6 +168,10 @@ def invoke_agent(
         "question": question,
         "history": list(history or []),
         "evaluation_retry_count": 0,
+        "memory": dict(memory or {}),
+        "needs_clarification": False,
+        "clarification_question": "",
+        "ambiguous_entities": {},
     }
     graph = get_compiled_graph()
     first_turn = not _first_invoke_complete
@@ -171,6 +182,9 @@ def invoke_agent(
         )
     t_run = time.perf_counter()
     out = graph.invoke(initial)
+    od = dict(out)
+    mem_in = initial.get("memory") or {}
+    od["memory"] = finalize_turn_memory(mem_in if isinstance(mem_in, dict) else {}, od)
     if first_turn:
         ms = (time.perf_counter() - t_run) * 1000
         logger.info(
@@ -178,4 +192,4 @@ def invoke_agent(
             ms,
         )
         _first_invoke_complete = True
-    return dict(out)
+    return od

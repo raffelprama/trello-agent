@@ -27,6 +27,10 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional prior turns (oldest first), client-managed.",
     )
+    memory: dict | None = Field(
+        default=None,
+        description="Optional session working memory (board_id, last_cards, etc.).",
+    )
     id: UUID | None = Field(default=None, description="Correlation id; echoed back.")
 
 
@@ -35,6 +39,7 @@ class ChatResponse(BaseModel):
     answer: str
     intent: str | None = None
     trace: dict = Field(default_factory=dict)
+    memory: dict | None = None
 
 
 @app.get("/health")
@@ -48,7 +53,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     log_id = new_request_id()
     log_event(logger, log_id, "chat_start", request_id=str(rid), question_len=len(req.question))
 
-    out = invoke_agent(req.question, req.history)
+    out = invoke_agent(req.question, req.history, memory=req.memory)
 
     intent = out.get("intent")
     ev = out.get("evaluation_result") or {}
@@ -65,4 +70,5 @@ async def chat(req: ChatRequest) -> ChatResponse:
         answer=out.get("answer") or "",
         intent=intent if isinstance(intent, str) else None,
         trace=trace,
+        memory=out.get("memory"),
     )

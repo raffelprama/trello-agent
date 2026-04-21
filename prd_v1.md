@@ -1,4 +1,8 @@
-# Product Requirements Document (PRD)
+# PRD: Trello Agent
+
+**Version:** 1.0  
+**Status:** Draft  
+**Last Updated:** 2026-04-21
 
 ## Trello AI Agent — Fully Agentic LangGraph Architecture
 

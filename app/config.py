@@ -55,3 +55,9 @@ MAX_EVAL_RETRIES: int = 2
 
 # Destructive actions (DELETE /1/cards/{id}); off by default
 DELETE_ITEM: bool = _env_bool("DELETE_ITEM", False)
+
+# Observability — every turn logs Trello + LLM at INFO (summary). Set true for full JSON/text bodies in logs.
+LOG_TRELLO_FULL: bool = _env_bool("LOG_TRELLO_FULL", False)
+LOG_LLM_FULL: bool = _env_bool("LOG_LLM_FULL", False)
+# Max characters when logging full bodies (avoid huge stderr)
+LOG_MAX_BODY_CHARS: int = int(os.getenv("LOG_MAX_BODY_CHARS", "16000"))
