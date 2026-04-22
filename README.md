@@ -162,6 +162,8 @@ Board/list/card names are resolved case-insensitively. If a name could be a **li
 
 ## Architecture
 
+Technical documentation (topology, LangGraph routing, plans, memory, observability): [`docs/README.md`](docs/README.md).
+
 ### System overview
 
 The HTTP API is **stateless** except for optional **`memory`** per request. The CLI keeps in-memory history and memory; both paths invoke the same compiled LangGraph.

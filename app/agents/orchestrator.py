@@ -10,45 +10,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.base import Plan, PlanStep, new_plan_id, plan_from_dict, plan_to_dict
 from app.llm import get_chat_model, invoke_chat_logged
+from app.prompt.orchestrator import (
+    ANALYZE_SYSTEM,
+    BUILD_PLAN_SYSTEM,
+    RESUME_PLAN_SYSTEM,
+    format_analyze_user,
+    format_build_plan_user,
+    format_resume_plan_user,
+)
 from app.session_memory import memory_summary_for_planner
 
 logger = logging.getLogger(__name__)
-
-CATALOG = """
-Allowed agents and asks (inputs must be short hints or $step_id.field references only).
-PRD v3 intent hints (for final_intent naming): QUERY_BOARDS, QUERY_SEARCH, QUERY_NOTIFICATIONS, QUERY_CUSTOM_FIELDS,
-CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_CREATE, etc.
-
-- member: get_me | get_my_boards | get_member_cards | get_my_notifications | get_my_organizations | update_me | resolve_member
-- board: resolve_board | get_board | get_board_lists | get_board_cards | get_board_labels | get_board_members | get_board_actions | create_board | update_board | delete_board | get_board_custom_fields | add_board_member | remove_board_member | get_board_memberships
-- list: resolve_list | get_list_cards | create_list | update_list | archive_list | set_list_closed | set_list_pos
-- card: resolve_card | get_card_details | create_card | update_card | move_card | delete_card | set_card_closed | remove_card_member | add_card_member | set_card_due | set_card_due_complete | get_card_custom_field_items | set_card_custom_field_item
-- checklist: list_checklists | resolve_checklist | resolve_check_item | set_checkitem_state | create_checkitem | create_checklist | delete_checkitem
-- label: resolve_label | add_label_to_card | remove_label_from_card | create_label_on_board | get_label
-- comment: list_comments | create_comment | update_comment | delete_comment
-- custom_field: get_board_custom_fields | create_custom_field | get_card_custom_field_items | set_card_custom_field_value | delete_custom_field
-- webhook: list_webhooks | create_webhook | get_webhook | delete_webhook
-- organization: get_my_organizations | get_organization | get_organization_boards | get_organization_members
-- search: search | search_members
-- notification: list_notifications | mark_all_notifications_read | update_notification
-- attachment: list_attachments | add_url_attachment | delete_attachment
-
-Reference outputs from prior steps using "$STEP_ID.field" (e.g. "$s1.board_id", "$s2.list_id", "$s3.card_id").
-Typical flows:
-- "all cards on board X": resolve_board -> get_board_cards (board_id from $s0)
-- "move card A to list B": resolve_board -> resolve_card(card_hint) -> resolve_list(list_hint) -> move_card(card_id, target_list_id from $list step)
-- "add card Title in List L": resolve_board -> resolve_list -> create_card(list_id, card_name)
-- "find cards about onboarding": search (query in inputs_json)
-- "show notifications": member get_my_notifications OR notification list_notifications
-- "set custom field Priority on card X": resolve_board -> resolve_card -> custom_field get_board_custom_fields -> set_card_custom_field_value
-- "mark [card] as done": resolve_board -> resolve_card -> card set_card_due_complete(dueComplete=true)
-- "add checklist [name] to [card]": resolve_board -> resolve_card -> checklist create_checklist(name)
-- "add item [X] to [checklist] on [card]": resolve_board -> resolve_card -> resolve_checklist -> create_checkitem
-- "check off [item] on [card]": resolve_board -> resolve_card -> resolve_check_item (by card_id+item_name) -> set_checkitem_state
-- "add label [name] to [card]": resolve_board -> resolve_card -> resolve_label -> add_label_to_card
-- "assign [person] to [card]": resolve_board -> resolve_card -> member resolve_member -> card add_card_member
-Do NOT put full user sentences into card_hint — use a short token from the user request (card title, list name, board name).
-"""
 
 # OpenAI structured outputs require object schemas with additionalProperties: false.
 # Plain dict[str, Any] in Pydantic does not satisfy that — use JSON strings and parse locally.
@@ -88,6 +60,33 @@ class _BuildPlan(BaseModel):
     steps: list[_OrchestratorStep]
 
 
+class _Analysis(BaseModel):
+    """Stage-1 structured reasoning; no executable plan steps."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_expectation: str = Field(
+        default="",
+        description="One sentence: what the user actually wants done.",
+    )
+    analysis: str = Field(
+        default="",
+        description="Short paragraph: ambiguities, implicit references, constraints, missing info.",
+    )
+    reasoning: str = Field(
+        default="",
+        description="Ordered high-level steps in natural language only; not agent.ask names or JSON.",
+    )
+    required_entities: list[str] = Field(
+        default_factory=list,
+        description="Entity types to resolve, e.g. board, list, card, member, label (lowercase tokens).",
+    )
+    suggested_final_intent: str = Field(
+        default="",
+        description="Short hint label e.g. CARD_MOVE, QUERY_BOARDS; planner may override.",
+    )
+
+
 class _ResumePlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -103,31 +102,41 @@ class _ResumePlan(BaseModel):
 class OrchestratorAgent:
     """Builds or resumes a Plan DAG; does not execute Trello calls."""
 
+    def analyze(self, user_text: str, memory: dict[str, Any] | None) -> _Analysis:
+        """Stage 1: structured reasoning only (separate LLM invoke from plan building)."""
+        mem = memory or {}
+        summary = memory_summary_for_planner(mem)
+        try:
+            llm = get_chat_model(0).with_structured_output(_Analysis)
+            prompt = format_analyze_user(memory_summary=summary, user_text=user_text)
+            raw = invoke_chat_logged(
+                llm,
+                [{"role": "system", "content": ANALYZE_SYSTEM}, {"role": "user", "content": prompt}],
+                operation="orchestrator_analyze",
+            )
+            out = raw if isinstance(raw, _Analysis) else _Analysis.model_validate(raw)
+            logger.info(
+                "[plan] analyze intent=%s required=%s",
+                out.suggested_final_intent,
+                out.required_entities,
+            )
+            return out
+        except Exception:
+            logger.warning("[plan] analyze failed; continuing without analyzer output", exc_info=True)
+            return _Analysis()
+
     def build_plan(self, user_text: str, memory: dict[str, Any] | None) -> Plan:
         mem = memory or {}
+        analysis = self.analyze(user_text, mem)
+        analysis_dict = analysis.model_dump()
+        meta_base: dict[str, Any] = {"user_text": user_text, "analysis": analysis_dict}
+
         llm = get_chat_model(0).with_structured_output(_BuildPlan)
         summary = memory_summary_for_planner(mem)
-        prompt = f"""You are the orchestrator for a Trello assistant. Decompose the user's request into a linear plan (DAG with depends_on).
-
-{CATALOG}
-
-Session memory (hints only):
-{summary}
-
-User message:
-{user_text}
-
-Rules:
-- Start with board.resolve_board when any board-scoped action is needed unless memory already has board_id and the user did not name a different board.
-- Use depends_on so list/card steps run after board resolution when they need board_id from a prior step.
-- For move_card: inputs should reference card_id and target_list_id from resolve steps, e.g. "$s2.card_id" and "$s3.list_id".
-- For create_card: include card_name as a SHORT title string when the user gave one; list_id as "$sx.list_id" from resolve_list.
-- Keep inputs values short. Never copy the entire user message into a single field.
-- Each step's inputs_json field must be a valid JSON object serialized as a string; when a step has no inputs, set inputs_json to {{}} (empty JSON object).
-"""
+        prompt = format_build_plan_user(memory_summary=summary, user_text=user_text, analysis=analysis_dict)
         raw = invoke_chat_logged(
             llm,
-            [{"role": "system", "content": "Output only valid structured plan steps."}, {"role": "user", "content": prompt}],
+            [{"role": "system", "content": BUILD_PLAN_SYSTEM}, {"role": "user", "content": prompt}],
             operation="orchestrator_build_plan",
         )
         out = raw if isinstance(raw, _BuildPlan) else _BuildPlan.model_validate(raw)
@@ -159,7 +168,7 @@ Rules:
                 final_intent=out.final_intent or "get_board_cards",
                 current_index=0,
                 results={},
-                meta={"user_text": user_text},
+                meta=dict(meta_base),
             )
         pid = new_plan_id()
         steps = [
@@ -174,7 +183,7 @@ Rules:
             )
             for s in out.steps
         ]
-        plan = Plan(plan_id=pid, steps=steps, final_intent=out.final_intent, current_index=0, results={}, meta={"user_text": user_text})
+        plan = Plan(plan_id=pid, steps=steps, final_intent=out.final_intent, current_index=0, results={}, meta=dict(meta_base))
         logger.info(
             "[plan] built plan_id=%s steps=[%s]",
             pid,
@@ -190,29 +199,16 @@ Rules:
         summary = memory_summary_for_planner(mem)
         idx = int(plan.current_index)
         cur = plan.steps[idx] if 0 <= idx < len(plan.steps) else None
-        prompt = f"""The assistant was waiting for more information to continue an existing Trello plan.
-
-{CATALOG}
-
-Session memory:
-{summary}
-
-Pending plan (JSON):
-{json.dumps(plan_to_dict(plan), ensure_ascii=False)[:12000]}
-
-Blocked step (if any): {cur.step_id if cur else "none"} ask={cur.ask if cur else ""}
-
-Latest user message (may be the answer):
-{user_text}
-
-Decide:
-- If the user is continuing/clarifying (picking an option, giving a list name, confirming), set is_continuation=true and patch_inputs_json to a JSON object string with new fields (e.g. {{"list_hint":"Done"}}).
-- If the user started a completely new task, set abandon_pending=true.
-- patch_inputs_json must be valid JSON as a string; use {{}} if nothing to patch.
-"""
+        prompt = format_resume_plan_user(
+            memory_summary=summary,
+            user_text=user_text,
+            plan_dict=plan_to_dict(plan),
+            blocked_step_id=cur.step_id if cur else "none",
+            blocked_ask=cur.ask if cur else "",
+        )
         raw = invoke_chat_logged(
             llm,
-            [{"role": "system", "content": "Structured resume only."}, {"role": "user", "content": prompt}],
+            [{"role": "system", "content": RESUME_PLAN_SYSTEM}, {"role": "user", "content": prompt}],
             operation="orchestrator_resume_plan",
         )
         out = raw if isinstance(raw, _ResumePlan) else _ResumePlan.model_validate(raw)

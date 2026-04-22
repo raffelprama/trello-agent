@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from app.llm import get_chat_model, invoke_chat_logged
+from app.prompt.reflection import REFLECTION_SYSTEM, format_reflection_user
 
 logger = logging.getLogger(__name__)
 
@@ -21,22 +22,19 @@ class ReflectionAgent:
         trace = state.get("plan_trace") or []
 
         llm = get_chat_model(0)
-        prompt = f"""The Trello assistant could not complete the request.
-Explain briefly what went wrong and what the user could try next.
-
-User question: {question}
-Error: {err}
-Evaluation: {eval_reason}
-Plan trace (last steps): {json.dumps(trace[-6:], default=str)[:3000]}
-
-If something was not found, suggest checking spelling or listing available boards/lists from a prior successful turn.
-"""
+        trace_snippet = json.dumps(trace[-6:], default=str)[:3000]
+        prompt = format_reflection_user(
+            question=question,
+            err=err,
+            eval_reason=eval_reason,
+            trace_snippet=trace_snippet,
+        )
 
         try:
             msg = invoke_chat_logged(
                 llm,
                 [
-                    {"role": "system", "content": "Be concise and helpful."},
+                    {"role": "system", "content": REFLECTION_SYSTEM},
                     {"role": "user", "content": prompt},
                 ],
                 operation="reflection_agent",
