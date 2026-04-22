@@ -13,18 +13,37 @@ def empty_memory() -> dict[str, Any]:
         "last_cards": [],  # [{name, list, id?}]
         "last_card_id": None,
         "last_card_name": None,
+        "last_mentioned_card_id": None,
+        "last_mentioned_list_id": None,
+        "custom_field_map": [],  # [{id, name}]
+        "webhook_map": [],  # [{id, description, idModel}]
+        "settings": {
+            "confirm_mutations": True,
+            "dry_run": False,
+            "timezone": None,
+            "default_board": None,
+        },
+        "destructive_confirmed_for_plan": None,
         "pending_clarify": None,
         "pending_plan": None,  # {plan: dict, ...} — A2A resume
     }
 
 
 def merge_memory(prev: dict[str, Any] | None, update: dict[str, Any]) -> dict[str, Any]:
-    """Shallow merge; list_map/last_cards replaced when update provides them."""
+    """Shallow merge; nested settings merged; list_map/last_cards replaced when update provides them."""
     base = dict(empty_memory())
     if prev:
         base.update({k: v for k, v in prev.items() if v is not None})
+    default_settings = dict(empty_memory()["settings"])
+    if isinstance(base.get("settings"), dict):
+        default_settings = {**default_settings, **base["settings"]}
+    base["settings"] = default_settings
     for k, v in update.items():
-        if v is not None:
+        if v is None:
+            continue
+        if k == "settings" and isinstance(v, dict):
+            base["settings"] = {**base["settings"], **v}
+        else:
             base[k] = v
     return base
 
@@ -49,6 +68,23 @@ def memory_summary_for_planner(mem: dict[str, Any] | None) -> str:
                 )
     if mem.get("last_card_id"):
         lines.append(f"last_focused_card_id={mem.get('last_card_id')} name={mem.get('last_card_name')!r}")
+    if mem.get("last_mentioned_list_id"):
+        lines.append(f"last_mentioned_list_id={mem.get('last_mentioned_list_id')}")
+    if mem.get("last_mentioned_card_id"):
+        lines.append(f"last_mentioned_card_id={mem.get('last_mentioned_card_id')}")
+    cfs = mem.get("custom_field_map")
+    if isinstance(cfs, list) and cfs:
+        names = [str(x.get("name", "")) for x in cfs if isinstance(x, dict)][:12]
+        lines.append(f"custom fields (names): {', '.join(names)}")
+    wh = mem.get("webhook_map")
+    if isinstance(wh, list) and wh:
+        lines.append(f"webhooks cached: {len(wh)}")
+    st = mem.get("settings")
+    if isinstance(st, dict):
+        lines.append(
+            f"settings: confirm_mutations={st.get('confirm_mutations')} dry_run={st.get('dry_run')} "
+            f"timezone={st.get('timezone')!r}",
+        )
     pp = mem.get("pending_plan")
     if isinstance(pp, dict) and pp.get("plan"):
         lines.append("pending_plan: present (continuation expected for blocked step)")
@@ -116,6 +152,7 @@ def extract_from_parsed_and_entities(
         if cards_out:
             out["last_card_id"] = cards_out[-1].get("id")
             out["last_card_name"] = cards_out[-1].get("name")
+            out["last_mentioned_card_id"] = cards_out[-1].get("id")
 
     if intent == "get_card_details" and isinstance(parsed.get("card"), dict):
         cd = parsed["card"]
@@ -123,6 +160,7 @@ def extract_from_parsed_and_entities(
         if cid:
             out["last_card_id"] = cid
             out["last_card_name"] = cd.get("name")
+            out["last_mentioned_card_id"] = cid
         lst = cd.get("list")
         lname = None
         if isinstance(lst, dict):
@@ -174,11 +212,31 @@ def extract_from_plan_parsed(parsed: dict[str, Any], entities: dict[str, Any]) -
             out["last_cards"] = cards_out
             out["last_card_id"] = cards_out[-1].get("id")
             out["last_card_name"] = cards_out[-1].get("name")
+            out["last_mentioned_card_id"] = cards_out[-1].get("id")
     if isinstance(parsed.get("card"), dict):
         cd = parsed["card"]
         if cd.get("id"):
             out["last_card_id"] = cd.get("id")
             out["last_card_name"] = cd.get("name")
+            out["last_mentioned_card_id"] = cd.get("id")
+    if isinstance(parsed.get("custom_fields"), list) and parsed["custom_fields"]:
+        out["custom_field_map"] = [
+            {"id": x.get("id"), "name": x.get("name")}
+            for x in parsed["custom_fields"]
+            if isinstance(x, dict) and x.get("id")
+        ]
+    if isinstance(parsed.get("webhooks"), list) and parsed["webhooks"]:
+        out["webhook_map"] = [
+            {"id": x.get("id"), "description": x.get("description"), "idModel": x.get("idModel")}
+            for x in parsed["webhooks"]
+            if isinstance(x, dict) and x.get("id")
+        ]
+    ent_lid = entities.get("list_id") if isinstance(entities, dict) else None
+    if ent_lid:
+        out["last_mentioned_list_id"] = ent_lid
+    ent_cid = entities.get("card_id") if isinstance(entities, dict) else None
+    if ent_cid:
+        out["last_mentioned_card_id"] = ent_cid
     return out
 
 
@@ -196,7 +254,7 @@ def clear_pending_clarify(mem: dict[str, Any]) -> dict[str, Any]:
 
 def finalize_turn_memory(prev: dict[str, Any] | None, out: dict[str, Any]) -> dict[str, Any]:
     """Update working memory after a graph turn (CLI + API)."""
-    base = dict(prev or empty_memory())
+    base = merge_memory(prev or empty_memory(), out.get("memory") or {})
     parsed = out.get("parsed_response") or {}
     ent = out.get("entities") or {}
     intent = str(out.get("intent") or "")
@@ -217,7 +275,11 @@ def finalize_turn_memory(prev: dict[str, Any] | None, out: dict[str, Any]) -> di
         if isinstance(payload, dict) and payload.get("plan"):
             m["pending_plan"] = payload
         elif isinstance(out.get("plan"), dict) and out.get("plan", {}).get("plan_id"):
-            m["pending_plan"] = {"plan": out["plan"]}
+            pp: dict[str, Any] = {"plan": out["plan"]}
+            amb = out.get("ambiguous_entities") or {}
+            if isinstance(amb, dict) and amb.get("kind") == "destructive_confirm":
+                pp["awaiting_destructive_confirm"] = True
+            m["pending_plan"] = pp
         return m
 
     if ev.get("status") == "success" and not out.get("error_message"):
@@ -230,6 +292,7 @@ def finalize_turn_memory(prev: dict[str, Any] | None, out: dict[str, Any]) -> di
             )
         m = clear_pending_clarify(merge_memory(base, upd))
         m["pending_plan"] = None
+        m.pop("destructive_confirmed_for_plan", None)
         return m
 
     return base

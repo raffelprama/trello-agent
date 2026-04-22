@@ -112,7 +112,23 @@ class CardAgent(BaseAgent):
             cid = ins.get("card_id")
             if not cid:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
-            fields = {k: v for k, v in ins.items() if k in ("name", "desc", "due", "dueComplete", "closed", "idList")}
+            allowed = (
+                "name",
+                "desc",
+                "due",
+                "dueComplete",
+                "closed",
+                "idList",
+                "idBoard",
+                "pos",
+                "start",
+                "idMembers",
+                "idLabels",
+                "address",
+                "locationName",
+                "coordinates",
+            )
+            fields = {k: v for k, v in ins.items() if k in allowed}
             st, c = card_tools.update_card(str(cid), **fields)
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
@@ -125,6 +141,15 @@ class CardAgent(BaseAgent):
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
             if not target:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["target_list_id"])
+            if not ins.get("skip_idempotency_check"):
+                st0, cur = card_tools.get_card_details(str(cid))
+                if st0 < 400 and isinstance(cur, dict) and str(cur.get("idList") or "") == str(target):
+                    return A2AResponse(
+                        task_id=msg.task_id,
+                        frm=self.name,
+                        status="ok",
+                        data={"card": cur, "card_id": cid, "skipped": True, "reason": "already_on_list"},
+                    )
             st, c = card_tools.move_card(str(cid), str(target))
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
@@ -146,6 +171,132 @@ class CardAgent(BaseAgent):
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
             return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"deleted": True, "card_id": cid})
+
+        if ask == "set_card_closed":
+            cid = ins.get("card_id")
+            if not cid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
+            closed = ins.get("closed")
+            if closed is None:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["closed"])
+            want = bool(closed)
+            if not ins.get("skip_idempotency_check"):
+                st0, cur = card_tools.get_card_details(str(cid))
+                if st0 < 400 and isinstance(cur, dict) and bool(cur.get("closed")) == want:
+                    return A2AResponse(
+                        task_id=msg.task_id,
+                        frm=self.name,
+                        status="ok",
+                        data={"card": cur, "card_id": cid, "skipped": True, "reason": "already_in_state"},
+                    )
+            st, c = card_tools.set_card_closed(str(cid), want)
+            if st >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"card": c, "card_id": cid})
+
+        if ask == "set_card_due_complete":
+            cid = ins.get("card_id")
+            if not cid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
+            due_complete = ins.get("dueComplete")
+            if due_complete is None:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["dueComplete"])
+            want = bool(due_complete)
+            st0, cur = card_tools.get_card_details(str(cid))
+            if st0 >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st0}")
+            if isinstance(cur, dict) and bool(cur.get("dueComplete")) == want:
+                return A2AResponse(
+                    task_id=msg.task_id,
+                    frm=self.name,
+                    status="ok",
+                    data={"card": cur, "card_id": cid, "skipped": True, "reason": "already_in_state"},
+                )
+            st, c = card_tools.set_due_complete(str(cid), want)
+            if st >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"card": c, "card_id": c.get("id", cid)})
+
+        if ask == "set_card_due":
+            cid = ins.get("card_id")
+            if not cid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
+            if "due" not in ins:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["due"])
+            due = ins.get("due")
+            st, c = card_tools.set_due(str(cid), due if due not in ("", None) else None)
+            if st >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"card": c, "card_id": c.get("id", cid)})
+
+        if ask == "add_card_member":
+            cid = ins.get("card_id")
+            mid = ins.get("member_id") or ins.get("idMember")
+            if not cid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
+            if not mid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["member_id"])
+            st0, cur = card_tools.get_card_details(str(cid))
+            if st0 >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st0}")
+            members = cur.get("idMembers") if isinstance(cur, dict) else None
+            if isinstance(members, list) and str(mid) in [str(x) for x in members]:
+                return A2AResponse(
+                    task_id=msg.task_id,
+                    frm=self.name,
+                    status="ok",
+                    data={"card": cur, "card_id": cid, "member_id": str(mid), "skipped": True, "reason": "already_in_state"},
+                )
+            st, _ = card_tools.add_member(str(cid), str(mid))
+            if st >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
+            st2, after = card_tools.get_card_details(str(cid))
+            card_out = after if st2 < 400 and isinstance(after, dict) else cur
+            return A2AResponse(
+                task_id=msg.task_id,
+                frm=self.name,
+                status="ok",
+                data={"card": card_out, "card_id": cid, "member_id": str(mid)},
+            )
+
+        if ask == "remove_card_member":
+            cid = ins.get("card_id")
+            mid = ins.get("member_id") or ins.get("idMember")
+            if not cid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
+            if not mid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["member_id"])
+            st, _ = card_tools.remove_card_member(str(cid), str(mid))
+            if st >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"removed": True, "card_id": cid, "member_id": mid})
+
+        if ask == "get_card_custom_field_items":
+            cid = ins.get("card_id")
+            if not cid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
+            params = {k: v for k, v in ins.items() if k in ("fields",)}
+            st, items = card_tools.get_card_custom_field_items(str(cid), **params)
+            if st >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"custom_field_items": items, "card_id": cid})
+
+        if ask == "set_card_custom_field_item":
+            cid = ins.get("card_id")
+            cfid = ins.get("custom_field_id") or ins.get("idCustomField")
+            if not cid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
+            if not cfid:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["custom_field_id"])
+            body = ins.get("body")
+            if body is None and "value" in ins:
+                body = {"value": ins["value"]}
+            if not isinstance(body, dict):
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["body"])
+            st, out = card_tools.set_card_custom_field_item(str(cid), str(cfid), body)
+            if st >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"custom_field_item": out, "card_id": cid})
 
         return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"Unknown ask={ask!r}")
 

@@ -13,9 +13,10 @@ load_dotenv(_ROOT / ".env")
 
 
 def _get_trello_key() -> str:
-    key = os.getenv("TRELLO_KEY") or os.getenv("TRELOO_KEY")
+    # PRD v3: TRELLO_API_KEY; legacy: TRELLO_KEY, TRELOO_KEY (typo)
+    key = os.getenv("TRELLO_API_KEY") or os.getenv("TRELLO_KEY") or os.getenv("TRELOO_KEY")
     if not key:
-        raise RuntimeError("Set TRELLO_KEY or TRELOO_KEY in .env")
+        raise RuntimeError("Set TRELLO_API_KEY or TRELLO_KEY (or TRELOO_KEY) in .env")
     return key
 
 
@@ -34,9 +35,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 TRELLO_KEY: str = _get_trello_key()
-TRELLO_TOKEN: str = os.getenv("TRELLO_TOKEN") or ""
+# PRD v3: TRELLO_API_TOKEN; legacy: TRELLO_TOKEN
+TRELLO_TOKEN: str = os.getenv("TRELLO_API_TOKEN") or os.getenv("TRELLO_TOKEN") or ""
 if not TRELLO_TOKEN:
-    raise RuntimeError("Set TRELLO_TOKEN in .env")
+    raise RuntimeError("Set TRELLO_API_TOKEN or TRELLO_TOKEN in .env")
 
 TRELLO_BOARD_ID: str | None = os.getenv("TRELLO_BOARD_ID") or None
 
@@ -55,6 +57,9 @@ MAX_EVAL_RETRIES: int = 2
 
 # Destructive actions (DELETE /1/cards/{id}); off by default
 DELETE_ITEM: bool = _env_bool("DELETE_ITEM", False)
+
+# First-turn warm-up: me + boards + list_map for default/single board (PRD §9.1)
+SESSION_PREFETCH: bool = _env_bool("SESSION_PREFETCH", False)
 
 # Observability — every turn logs Trello + LLM at INFO (summary). Set true for full JSON/text bodies in logs.
 LOG_TRELLO_FULL: bool = _env_bool("LOG_TRELLO_FULL", False)

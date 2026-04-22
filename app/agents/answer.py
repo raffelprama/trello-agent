@@ -41,6 +41,7 @@ Rules:
 - Ground every factual claim in the JSON. If cards/lists/boards are listed, reflect counts and names accurately.
 - If the user asked to see all cards on a board, list or summarize cards from the "cards" array.
 - If "card" is present, summarize description, labels, due dates, checklists, members.
+- If "dry_run" is true in the JSON, say clearly that mutating API calls were not executed and name dry_run_stopped_at if present.
 - If clarification is true, the assistant is only asking a question — repeat it politely.
 - Do not invent IDs.
 - Format for readability: use short paragraphs and a blank line between sections when you cover several topics (e.g. board name, then lists, then cards). Avoid a single wall of text when there are many items."""

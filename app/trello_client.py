@@ -1,4 +1,4 @@
-"""HTTP client for Trello REST API v1 — rate limiting, 429 handling, full PRD v2 surface."""
+"""HTTP client for Trello REST API v1 — rate limiting, 429 handling, PRD v2 + v3 surface."""
 
 from __future__ import annotations
 
@@ -75,6 +75,7 @@ class TrelloClient:
             params={"key": TRELLO_KEY, "token": TRELLO_TOKEN},
         )
         self._req_times: deque[float] = deque()
+        self._http_trace: list[dict[str, Any]] = []
 
     def close(self) -> None:
         self._client.close()
@@ -171,7 +172,13 @@ class TrelloClient:
                 extra_params=merged_params,
                 request_json=json,
             )
+            self._http_trace.append({"method": method, "path": path, "status": status})
             return status, data
+
+    def consume_http_trace(self) -> list[dict[str, Any]]:
+        out = list(self._http_trace)
+        self._http_trace.clear()
+        return out
 
     # --- Member ---
 
@@ -179,14 +186,30 @@ class TrelloClient:
         status, data = self._request("GET", "/members/me")
         return status, data if isinstance(data, dict) else {"_data": data}
 
-    def list_boards(self) -> tuple[int, list[dict[str, Any]]]:
-        status, data = self._request("GET", "/members/me/boards")
+    def list_boards(self, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", "/members/me/boards", params=dict(params) if params else None)
         if not isinstance(data, list):
             return status, []
         return status, data
 
     def get_member_cards(self, member_id: str = "me", **params: Any) -> tuple[int, list[dict[str, Any]]]:
         status, data = self._request("GET", f"/members/{member_id}/cards", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    def update_member_me(self, **fields: Any) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("PUT", "/members/me", json=dict(fields))
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def get_my_notifications(self, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", "/members/me/notifications", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    def get_my_organizations(self, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", "/members/me/organizations", params=dict(params))
         if not isinstance(data, list):
             return status, []
         return status, data
@@ -204,6 +227,32 @@ class TrelloClient:
     def update_board(self, board_id: str, **fields: Any) -> tuple[int, dict[str, Any]]:
         status, data = self._request("PUT", f"/boards/{board_id}", json=dict(fields))
         return status, data if isinstance(data, dict) else {"_data": data}
+
+    def delete_board(self, board_id: str) -> tuple[int, Any]:
+        return self._request("DELETE", f"/boards/{board_id}")
+
+    def get_board_memberships(self, board_id: str, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", f"/boards/{board_id}/memberships", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    def add_board_member(self, board_id: str, member_id: str, member_type: str = "normal") -> tuple[int, dict[str, Any]]:
+        status, data = self._request(
+            "PUT",
+            f"/boards/{board_id}/members/{member_id}",
+            json={"type": member_type},
+        )
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def remove_board_member(self, board_id: str, member_id: str) -> tuple[int, Any]:
+        return self._request("DELETE", f"/boards/{board_id}/members/{member_id}")
+
+    def get_board_custom_fields(self, board_id: str, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", f"/boards/{board_id}/customFields", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
 
     def get_board_lists(
         self,
@@ -278,6 +327,14 @@ class TrelloClient:
     def archive_list(self, list_id: str, closed: bool = True) -> tuple[int, dict[str, Any]]:
         return self.update_list(list_id, closed=closed)
 
+    def put_list_closed(self, list_id: str, value: bool) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("PUT", f"/lists/{list_id}/closed", json={"value": value})
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def put_list_pos(self, list_id: str, value: str | float) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("PUT", f"/lists/{list_id}/pos", json={"value": value})
+        return status, data if isinstance(data, dict) else {"_data": data}
+
     def get_list_cards(self, list_id: str, **params: Any) -> tuple[int, list[dict[str, Any]]]:
         status, data = self._request("GET", f"/lists/{list_id}/cards", params=dict(params))
         if not isinstance(data, list):
@@ -337,6 +394,33 @@ class TrelloClient:
     def delete_card(self, card_id: str) -> tuple[int, Any]:
         return self._request("DELETE", f"/cards/{card_id}")
 
+    def put_card_closed(self, card_id: str, value: bool) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("PUT", f"/cards/{card_id}/closed", json={"value": value})
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def delete_card_member(self, card_id: str, member_id: str) -> tuple[int, Any]:
+        return self._request("DELETE", f"/cards/{card_id}/idMembers/{member_id}")
+
+    def get_card_custom_field_items(self, card_id: str, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", f"/cards/{card_id}/customFieldItems", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    def set_card_custom_field_item(
+        self,
+        card_id: str,
+        custom_field_id: str,
+        body: dict[str, Any],
+    ) -> tuple[int, dict[str, Any]]:
+        """PUT /cards/{id}/customField/{idCustomField}/item — body per PRD §6.10.2."""
+        status, data = self._request(
+            "PUT",
+            f"/cards/{card_id}/customField/{custom_field_id}/item",
+            json=body,
+        )
+        return status, data if isinstance(data, dict) else {"_data": data}
+
     def get_card_checklists(self, card_id: str, **params: Any) -> tuple[int, list[dict[str, Any]]]:
         status, data = self._request("GET", f"/cards/{card_id}/checklists", params=dict(params))
         if not isinstance(data, list):
@@ -358,6 +442,32 @@ class TrelloClient:
         if not isinstance(data, list):
             return status, []
         return status, data
+
+    def get_card_attachment(self, card_id: str, attachment_id: str, **params: Any) -> tuple[int, dict[str, Any]]:
+        status, data = self._request(
+            "GET",
+            f"/cards/{card_id}/attachments/{attachment_id}",
+            params=dict(params),
+        )
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def post_card_attachment_url(
+        self,
+        card_id: str,
+        url: str,
+        name: str | None = None,
+        mime_type: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        body: dict[str, Any] = {"url": url}
+        if name:
+            body["name"] = name
+        if mime_type:
+            body["mimeType"] = mime_type
+        status, data = self._request("POST", f"/cards/{card_id}/attachments", json=body)
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def delete_card_attachment(self, card_id: str, attachment_id: str) -> tuple[int, Any]:
+        return self._request("DELETE", f"/cards/{card_id}/attachments/{attachment_id}")
 
     def post_card_comment(self, card_id: str, text: str) -> tuple[int, dict[str, Any]]:
         status, data = self._request("POST", f"/cards/{card_id}/actions/comments", json={"text": text})
@@ -443,3 +553,119 @@ class TrelloClient:
 
     def delete_label(self, label_id: str) -> tuple[int, Any]:
         return self._request("DELETE", f"/labels/{label_id}")
+
+    # --- Custom fields (PRD v3 §6.10) ---
+
+    def create_custom_field(self, board_id: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """POST /customFields — body must include idModel (board id), name, type."""
+        payload = dict(body)
+        payload.setdefault("idModel", board_id)
+        status, data = self._request("POST", "/customFields", json=payload)
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def update_custom_field(self, custom_field_id: str, **fields: Any) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("PUT", f"/customFields/{custom_field_id}", json=dict(fields))
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def delete_custom_field(self, custom_field_id: str) -> tuple[int, Any]:
+        return self._request("DELETE", f"/customFields/{custom_field_id}")
+
+    def get_custom_field_options(self, custom_field_id: str, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", f"/customFields/{custom_field_id}/options", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    def add_custom_field_option(self, custom_field_id: str, text: str) -> tuple[int, dict[str, Any]]:
+        status, data = self._request(
+            "POST",
+            f"/customFields/{custom_field_id}/options",
+            json={"value": {"text": text}},
+        )
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def delete_custom_field_option(self, custom_field_id: str, option_id: str) -> tuple[int, Any]:
+        return self._request("DELETE", f"/customFields/{custom_field_id}/options/{option_id}")
+
+    # --- Webhooks (PRD v3 §6.11) ---
+
+    def list_token_webhooks(self) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", f"/tokens/{TRELLO_TOKEN}/webhooks")
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    def create_webhook(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("POST", "/webhooks", json=body)
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def get_webhook(self, webhook_id: str, **params: Any) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("GET", f"/webhooks/{webhook_id}", params=dict(params))
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def update_webhook(self, webhook_id: str, **fields: Any) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("PUT", f"/webhooks/{webhook_id}", json=dict(fields))
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def delete_webhook(self, webhook_id: str) -> tuple[int, Any]:
+        return self._request("DELETE", f"/webhooks/{webhook_id}")
+
+    # --- Organizations (PRD v3 §6.12) ---
+
+    def get_organization(self, org_id: str, **params: Any) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("GET", f"/organizations/{org_id}", params=dict(params))
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def get_organization_boards(self, org_id: str, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", f"/organizations/{org_id}/boards", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    def get_organization_members(self, org_id: str, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", f"/organizations/{org_id}/members", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    def get_organization_memberships(self, org_id: str, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", f"/organizations/{org_id}/memberships", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    def update_organization_member(self, org_id: str, member_id: str, member_type: str) -> tuple[int, dict[str, Any]]:
+        status, data = self._request(
+            "PUT",
+            f"/organizations/{org_id}/members/{member_id}",
+            json={"type": member_type},
+        )
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def remove_organization_member(self, org_id: str, member_id: str) -> tuple[int, Any]:
+        return self._request("DELETE", f"/organizations/{org_id}/members/{member_id}")
+
+    # --- Search (PRD v3 §6.13) ---
+
+    def search(self, **params: Any) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("GET", "/search", params=dict(params))
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def search_members(self, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+        status, data = self._request("GET", "/search/members", params=dict(params))
+        if not isinstance(data, list):
+            return status, []
+        return status, data
+
+    # --- Notifications (PRD v3 §6.14) ---
+
+    def get_notification(self, notification_id: str, **params: Any) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("GET", f"/notifications/{notification_id}", params=dict(params))
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def update_notification(self, notification_id: str, **fields: Any) -> tuple[int, dict[str, Any]]:
+        status, data = self._request("PUT", f"/notifications/{notification_id}", json=dict(fields))
+        return status, data if isinstance(data, dict) else {"_data": data}
+
+    def mark_all_notifications_read(self) -> tuple[int, Any]:
+        return self._request("PUT", "/notifications/all/read")

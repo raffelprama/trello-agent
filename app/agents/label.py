@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.agents.base import A2AMessage, A2AResponse, BaseAgent
+from app.resolution import match_dicts_by_name
 from app.tools import board as board_tools
 from app.tools import card as card_tools
 from app.tools import label as label_tools
@@ -29,10 +30,10 @@ class LabelAgent(BaseAgent):
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
             if not hint:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["label_name"])
-            low = hint.lower()
-            for lb in labels:
-                if isinstance(lb, dict) and low in str(lb.get("name", "")).lower():
-                    return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"label_id": lb.get("id"), "label": lb})
+            dict_labels = [lb for lb in labels if isinstance(lb, dict)]
+            hit = match_dicts_by_name(hint, dict_labels, name_key="name")
+            if hit:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"label_id": hit.get("id"), "label": hit})
             return A2AResponse(
                 task_id=msg.task_id,
                 frm=self.name,

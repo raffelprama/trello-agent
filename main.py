@@ -68,6 +68,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         "plan_step": last_step.get("step_id") if isinstance(last_step, dict) else None,
         "plan_agent": last_step.get("agent") if isinstance(last_step, dict) else None,
         "plan_status": last_step.get("status") if isinstance(last_step, dict) else None,
+        "plan_trace": pt,
     }
     log_event(logger, log_id, "chat_end", request_id=str(rid), intent=intent, evaluation=ev.get("status"))
 

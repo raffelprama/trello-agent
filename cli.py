@@ -151,6 +151,12 @@ def main() -> None:
                 parts.append(f"board={ent.get('resolved_board_name')!r}")
             if err_msg:
                 parts.append(f"err={err_msg[:80]!r}")
+            if isinstance(last, dict) and last.get("http"):
+                hops = last["http"]
+                if isinstance(hops, list) and hops:
+                    h = hops[-1]
+                    if isinstance(h, dict):
+                        parts.append(f"http={h.get('method')} {h.get('path')} -> {h.get('status')}")
             print(c("  [trace] " + " | ".join(parts), "90"))
         print()
 

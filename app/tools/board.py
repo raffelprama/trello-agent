@@ -30,6 +30,37 @@ def update_board(board_id: str, *, client: TrelloClient | None = None, **fields:
     return c.update_board(board_id, **fields)
 
 
+def delete_board(board_id: str, *, client: TrelloClient | None = None) -> tuple[int, Any]:
+    c = client or get_client()
+    return c.delete_board(board_id)
+
+
+def get_board_memberships(board_id: str, *, client: TrelloClient | None = None, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+    c = client or get_client()
+    return c.get_board_memberships(board_id, **params)
+
+
+def add_board_member(
+    board_id: str,
+    member_id: str,
+    *,
+    member_type: str = "normal",
+    client: TrelloClient | None = None,
+) -> tuple[int, dict[str, Any]]:
+    c = client or get_client()
+    return c.add_board_member(board_id, member_id, member_type)
+
+
+def remove_board_member(board_id: str, member_id: str, *, client: TrelloClient | None = None) -> tuple[int, Any]:
+    c = client or get_client()
+    return c.remove_board_member(board_id, member_id)
+
+
+def get_board_custom_fields(board_id: str, *, client: TrelloClient | None = None, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+    c = client or get_client()
+    return c.get_board_custom_fields(board_id, **params)
+
+
 def get_board_lists(
     board_id: str,
     *,

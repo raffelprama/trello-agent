@@ -15,20 +15,38 @@ from app.session_memory import memory_summary_for_planner
 logger = logging.getLogger(__name__)
 
 CATALOG = """
-Allowed agents and asks (inputs must be short hints or $step_id.field references only):
-- member: get_me | get_my_boards | get_member_cards
-- board: resolve_board | get_board | get_board_lists | get_board_cards | get_board_labels | get_board_members | get_board_actions | create_board | update_board
-- list: resolve_list | get_list_cards | create_list | update_list | archive_list
-- card: resolve_card | get_card_details | create_card | update_card | move_card | delete_card
-- checklist: list_checklists | resolve_checklist | resolve_check_item | set_checkitem_state | create_checkitem | delete_checkitem
+Allowed agents and asks (inputs must be short hints or $step_id.field references only).
+PRD v3 intent hints (for final_intent naming): QUERY_BOARDS, QUERY_SEARCH, QUERY_NOTIFICATIONS, QUERY_CUSTOM_FIELDS,
+CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_CREATE, etc.
+
+- member: get_me | get_my_boards | get_member_cards | get_my_notifications | get_my_organizations | update_me | resolve_member
+- board: resolve_board | get_board | get_board_lists | get_board_cards | get_board_labels | get_board_members | get_board_actions | create_board | update_board | delete_board | get_board_custom_fields | add_board_member | remove_board_member | get_board_memberships
+- list: resolve_list | get_list_cards | create_list | update_list | archive_list | set_list_closed | set_list_pos
+- card: resolve_card | get_card_details | create_card | update_card | move_card | delete_card | set_card_closed | remove_card_member | add_card_member | set_card_due | set_card_due_complete | get_card_custom_field_items | set_card_custom_field_item
+- checklist: list_checklists | resolve_checklist | resolve_check_item | set_checkitem_state | create_checkitem | create_checklist | delete_checkitem
 - label: resolve_label | add_label_to_card | remove_label_from_card | create_label_on_board | get_label
 - comment: list_comments | create_comment | update_comment | delete_comment
+- custom_field: get_board_custom_fields | create_custom_field | get_card_custom_field_items | set_card_custom_field_value | delete_custom_field
+- webhook: list_webhooks | create_webhook | get_webhook | delete_webhook
+- organization: get_my_organizations | get_organization | get_organization_boards | get_organization_members
+- search: search | search_members
+- notification: list_notifications | mark_all_notifications_read | update_notification
+- attachment: list_attachments | add_url_attachment | delete_attachment
 
 Reference outputs from prior steps using "$STEP_ID.field" (e.g. "$s1.board_id", "$s2.list_id", "$s3.card_id").
 Typical flows:
 - "all cards on board X": resolve_board -> get_board_cards (board_id from $s0)
 - "move card A to list B": resolve_board -> resolve_card(card_hint) -> resolve_list(list_hint) -> move_card(card_id, target_list_id from $list step)
 - "add card Title in List L": resolve_board -> resolve_list -> create_card(list_id, card_name)
+- "find cards about onboarding": search (query in inputs_json)
+- "show notifications": member get_my_notifications OR notification list_notifications
+- "set custom field Priority on card X": resolve_board -> resolve_card -> custom_field get_board_custom_fields -> set_card_custom_field_value
+- "mark [card] as done": resolve_board -> resolve_card -> card set_card_due_complete(dueComplete=true)
+- "add checklist [name] to [card]": resolve_board -> resolve_card -> checklist create_checklist(name)
+- "add item [X] to [checklist] on [card]": resolve_board -> resolve_card -> resolve_checklist -> create_checkitem
+- "check off [item] on [card]": resolve_board -> resolve_card -> resolve_check_item (by card_id+item_name) -> set_checkitem_state
+- "add label [name] to [card]": resolve_board -> resolve_card -> resolve_label -> add_label_to_card
+- "assign [person] to [card]": resolve_board -> resolve_card -> member resolve_member -> card add_card_member
 Do NOT put full user sentences into card_hint — use a short token from the user request (card title, list name, board name).
 """
 

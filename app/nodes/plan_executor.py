@@ -8,7 +8,10 @@ from typing import Any
 
 from app.agents.base import A2AMessage, Plan, PlanStep, new_task_id, parse_ref, plan_to_dict
 from app.agents.bus import get_default_bus
+from app.intent_taxonomy import normalize_intent_label
+from app.plan_governance import effective_confirm_mutations, effective_dry_run, is_destructive, is_mutating
 from app.state import ChatState
+from app.trello_client import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +36,13 @@ def _resolve_inputs(inputs: dict[str, Any], results: dict[str, dict[str, Any]]) 
     return out
 
 
-def _merge_memory_into_inputs(missing: list[str], mem: dict[str, Any], cur: dict[str, Any]) -> dict[str, Any]:
+def _merge_memory_into_inputs(
+    missing: list[str],
+    mem: dict[str, Any],
+    cur: dict[str, Any],
+    *,
+    results: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     m = dict(cur)
     keymap = {
         "board_id": "board_id",
@@ -41,10 +50,25 @@ def _merge_memory_into_inputs(missing: list[str], mem: dict[str, Any], cur: dict
         "card_id": "card_id",
         "target_list_id": "target_list_id",
     }
+
+    def _latest_result_field(field: str) -> Any:
+        if not results:
+            return None
+        for _sid, data in reversed(list(results.items())):
+            if isinstance(data, dict) and data.get(field):
+                return data[field]
+        return None
+
     for miss in missing:
         mk = keymap.get(miss)
-        if mk and mem.get(mk) and not m.get(mk):
+        if not mk or m.get(mk):
+            continue
+        if mem.get(mk):
             m[mk] = mem[mk]
+        else:
+            lr = _latest_result_field(mk)
+            if lr:
+                m[mk] = lr
     return m
 
 
@@ -134,10 +158,21 @@ def _aggregate_parsed(plan: Plan, results: dict[str, dict[str, Any]]) -> dict[st
             out["checklists"] = data["checklists"]
         if "comments" in data:
             out["comments"] = data["comments"]
+        if "custom_fields" in data:
+            out["custom_fields"] = data["custom_fields"]
+        if "webhooks" in data:
+            out["webhooks"] = data["webhooks"]
         if isinstance(data.get("board"), dict):
             b = data["board"]
             out["queried_board"] = {"id": b.get("id"), "name": b.get("name")}
     return out
+
+
+def _destructive_confirm_question(step: PlanStep) -> str:
+    return (
+        f"This step is destructive: {step.agent}.{step.ask}. "
+        "Reply with yes to proceed, or rephrase to cancel."
+    )
 
 
 def plan_executor_node(state: ChatState) -> dict[str, Any]:
@@ -193,13 +228,57 @@ def plan_executor_node(state: ChatState) -> dict[str, Any]:
         resolved = _resolve_inputs(step.inputs, plan.results)
         # Inject board_id from memory if still missing for list/card
         if not resolved.get("board_id") and mem.get("board_id"):
-            resolved["board_id"] = mem.get("board_id")
+            hint_for_board = str(resolved.get("board_hint") or resolved.get("name") or "").strip()
+            if not (step.agent == "board" and step.ask == "resolve_board" and hint_for_board):
+                resolved["board_id"] = mem.get("board_id")
 
         ctx: dict[str, Any] = {
             "user_text": user_text,
             "memory": mem,
             "_resolved_inputs": resolved,
         }
+
+        if is_destructive(step.agent, step.ask) and effective_confirm_mutations(mem):
+            if str(mem.get("destructive_confirmed_for_plan") or "") != str(plan.plan_id):
+                q = _destructive_confirm_question(step)
+                return {
+                    "plan": plan_to_dict(plan),
+                    "plan_trace": all_trace,
+                    "needs_clarification": True,
+                    "clarification_question": q,
+                    "ambiguous_entities": {"kind": "destructive_confirm", "step": f"{step.agent}.{step.ask}"},
+                    "plan_execution_status": "clarify",
+                    "pending_plan_payload": {"plan": plan_to_dict(plan), "awaiting_destructive_confirm": True},
+                    "http_status": 200,
+                    "parsed_response": {"clarification": True, "question": q},
+                }
+
+        dry = effective_dry_run(mem if isinstance(mem, dict) else None)
+        if dry and is_mutating(step.agent, step.ask):
+            trace_dr = {
+                "plan_id": plan.plan_id,
+                "step_id": step.step_id,
+                "agent": step.agent,
+                "ask": step.ask,
+                "status": "dry_run_skipped",
+                "dry_run_skipped": True,
+            }
+            all_trace.append(trace_dr)
+            parsed = _aggregate_parsed(plan, plan.results)
+            parsed["dry_run"] = True
+            parsed["dry_run_stopped_at"] = step.step_id
+            return {
+                "plan": plan_to_dict(plan),
+                "plan_trace": all_trace,
+                "parsed_response": parsed,
+                "plan_execution_status": "ok",
+                "http_status": 200,
+                "error_message": "",
+                "entities": _entities_from_results(plan.results),
+                "intent": normalize_intent_label(plan.final_intent),
+                "selected_tool": "a2a_plan",
+            }
+
         msg = A2AMessage(
             task_id=new_task_id(),
             frm="executor",
@@ -215,13 +294,16 @@ def plan_executor_node(state: ChatState) -> dict[str, Any]:
             step.ask,
         )
         resp = bus.dispatch(msg)
-        trace = {
+        trace: dict[str, Any] = {
             "plan_id": plan.plan_id,
             "step_id": step.step_id,
             "agent": step.agent,
             "ask": step.ask,
             "status": resp.status,
         }
+        http_rec = get_client().consume_http_trace()
+        if http_rec:
+            trace["http"] = http_rec
         all_trace.append(trace)
 
         if resp.status == "ok":
@@ -230,12 +312,16 @@ def plan_executor_node(state: ChatState) -> dict[str, Any]:
             continue
 
         if resp.status == "need_info":
-            merged = _merge_memory_into_inputs(resp.missing or [], mem, resolved)
+            merged = _merge_memory_into_inputs(resp.missing or [], mem, resolved, results=plan.results)
             if merged != resolved:
                 ctx2 = {**ctx, "_resolved_inputs": merged}
                 msg2 = A2AMessage(task_id=new_task_id(), frm="executor", to=step.agent, ask=step.ask, context=ctx2)
                 resp2 = bus.dispatch(msg2)
-                all_trace.append({**trace, "status": resp2.status, "retry": True})
+                tr2 = {**trace, "status": resp2.status, "retry": True}
+                h2 = get_client().consume_http_trace()
+                if h2:
+                    tr2["http"] = h2
+                all_trace.append(tr2)
                 if resp2.status == "ok":
                     plan.results[step.step_id] = dict(resp2.data or {})
                     plan.current_index += 1
@@ -313,7 +399,7 @@ def plan_executor_node(state: ChatState) -> dict[str, Any]:
         "http_status": 200,
         "error_message": "",
         "entities": _entities_from_results(plan.results),
-        "intent": plan.final_intent,
+        "intent": normalize_intent_label(plan.final_intent),
         "selected_tool": "a2a_plan",
     }
 

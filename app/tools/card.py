@@ -44,6 +44,32 @@ def delete_card(card_id: str, *, client: TrelloClient | None = None) -> tuple[in
     return c.delete_card(card_id)
 
 
+def set_card_closed(card_id: str, value: bool, *, client: TrelloClient | None = None) -> tuple[int, dict[str, Any]]:
+    c = client or get_client()
+    return c.put_card_closed(card_id, value)
+
+
+def remove_card_member(card_id: str, member_id: str, *, client: TrelloClient | None = None) -> tuple[int, Any]:
+    c = client or get_client()
+    return c.delete_card_member(card_id, member_id)
+
+
+def get_card_custom_field_items(card_id: str, *, client: TrelloClient | None = None, **params: Any) -> tuple[int, list[dict[str, Any]]]:
+    c = client or get_client()
+    return c.get_card_custom_field_items(card_id, **params)
+
+
+def set_card_custom_field_item(
+    card_id: str,
+    custom_field_id: str,
+    body: dict[str, Any],
+    *,
+    client: TrelloClient | None = None,
+) -> tuple[int, dict[str, Any]]:
+    c = client or get_client()
+    return c.set_card_custom_field_item(card_id, custom_field_id, body)
+
+
 def get_card_checklists(card_id: str, *, client: TrelloClient | None = None, **params: Any) -> tuple[int, list[dict[str, Any]]]:
     c = client or get_client()
     return c.get_card_checklists(card_id, **params)

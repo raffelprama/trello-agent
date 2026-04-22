@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from app.agents.base import A2AMessage, A2AResponse, BaseAgent, new_task_id
+from app.resolution import match_dicts_by_name
 from app.tools import board as board_tools
 from app.tools import list_ops as list_tools
 
@@ -15,19 +16,7 @@ def _norm(s: str) -> str:
 
 
 def _best_list_match(name_hint: str, lists: list[dict[str, Any]]) -> dict[str, Any] | None:
-    if not name_hint or not lists:
-        return None
-    nh = _norm(name_hint)
-    exact = [x for x in lists if _norm(str(x.get("name", ""))) == nh]
-    if len(exact) == 1:
-        return exact[0]
-    starts = [x for x in lists if _norm(str(x.get("name", ""))).startswith(nh)]
-    if len(starts) == 1:
-        return starts[0]
-    subs = [x for x in lists if nh in _norm(str(x.get("name", "")))]
-    if len(subs) == 1:
-        return subs[0]
-    return None
+    return match_dicts_by_name(name_hint, [x for x in lists if isinstance(x, dict)])
 
 
 class ListAgent(BaseAgent):
@@ -41,7 +30,15 @@ class ListAgent(BaseAgent):
 
         board_id = ins.get("board_id") or mem.get("board_id")
 
-        if ask in ("resolve_list", "get_list_cards", "create_list", "update_list", "archive_list") and not board_id:
+        if ask in (
+            "resolve_list",
+            "get_list_cards",
+            "create_list",
+            "update_list",
+            "archive_list",
+            "set_list_closed",
+            "set_list_pos",
+        ) and not board_id:
             if self.bus and ask == "resolve_list":
                 sub = A2AMessage(
                     task_id=new_task_id(),
@@ -64,7 +61,7 @@ class ListAgent(BaseAgent):
             return self._resolve_list(msg, ins, mem)
 
         list_id = ins.get("list_id")
-        if ask in ("get_list_cards", "update_list", "archive_list") and not list_id:
+        if ask in ("get_list_cards", "update_list", "archive_list", "set_list_closed", "set_list_pos") and not list_id:
             return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["list_id"])
 
         if ask == "get_list_cards":
@@ -102,6 +99,24 @@ class ListAgent(BaseAgent):
         if ask == "archive_list":
             closed = bool(ins.get("closed", True))
             st, lst = list_tools.archive_list(str(list_id), closed=closed)
+            if st >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"list": lst, "list_id": list_id})
+
+        if ask == "set_list_closed":
+            val = ins.get("closed")
+            if val is None:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["closed"])
+            st, lst = list_tools.set_list_closed(str(list_id), bool(val))
+            if st >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"list": lst, "list_id": list_id})
+
+        if ask == "set_list_pos":
+            pos = ins.get("pos")
+            if pos is None:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["pos"])
+            st, lst = list_tools.set_list_pos(str(list_id), pos)
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
             return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"list": lst, "list_id": list_id})
