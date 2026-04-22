@@ -1,7 +1,4 @@
-"""LangGraph assembly for the Trello agent.
-
-Heavy imports (langgraph, nodes, langchain) load only on first invoke — not at import time.
-"""
+"""LangGraph assembly for the Trello agent (A2A: orchestrator → plan_executor → answer | clarify | reflection)."""
 
 from __future__ import annotations
 
@@ -17,30 +14,22 @@ logger = logging.getLogger(__name__)
 _compiled_graph: Any = None
 
 
-def route_after_planner(state: ChatState) -> Literal["entity_resolver", "reflection", "clarify"]:
-    if state.get("needs_clarification"):
-        return "clarify"
+def route_after_orchestrator(state: ChatState) -> Literal["plan_executor", "reflection"]:
     if state.get("skip_tools"):
         return "reflection"
-    return "entity_resolver"
+    return "plan_executor"
 
 
-def route_after_entity(state: ChatState) -> Literal["tool_router", "reflection", "clarify"]:
+def route_after_plan_executor(state: ChatState) -> Literal["clarify", "answer_generator", "reflection"]:
     if state.get("needs_clarification"):
         return "clarify"
-    if state.get("skip_tools"):
+    if (state.get("plan_execution_status") or "") == "error" or (state.get("error_message") or "").strip():
         return "reflection"
-    return "tool_router"
+    return "answer_generator"
 
 
-def route_after_evaluation(state: ChatState) -> Literal["tool_router", "reflection", "end"]:
-    ev = state.get("evaluation_result") or {}
-    status = ev.get("status")
-    if status == "success":
-        return "end"
-    if status == "retry":
-        return "tool_router"
-    return "reflection"
+def route_after_evaluation(_state: ChatState) -> Literal["end"]:
+    return "end"
 
 
 def _build_graph():
@@ -64,70 +53,41 @@ def _build_graph():
     )
 
     t = time.perf_counter()
-    from app.nodes.planner import normalize_intent_planner
-
-    logger.info(
-        "[startup] imported planner (pulls LangChain + OpenAI) in %.0fms (total %.0fms)",
-        (time.perf_counter() - t) * 1000,
-        _elapsed(),
-    )
-
-    t = time.perf_counter()
     from app.nodes.answer_generator import answer_generator
     from app.nodes.clarify import clarify_node
+    from app.nodes.evaluation import evaluation
+    from app.nodes.orchestrator_node import orchestrator_node
+    from app.nodes.plan_executor import plan_executor_node
     from app.nodes.reflection import reflection_node
 
     logger.info(
-        "[startup] imported answer_generator + clarify + reflection in %.0fms (total %.0fms)",
-        (time.perf_counter() - t) * 1000,
-        _elapsed(),
-    )
-
-    t = time.perf_counter()
-    from app.nodes.entity_resolver import entity_resolver
-    from app.nodes.evaluation import evaluation
-    from app.nodes.tool_executor import tool_executor
-    from app.nodes.tool_observer import tool_observer
-    from app.nodes.tool_router import tool_router
-
-    logger.info(
-        "[startup] imported entity_resolver, tools, evaluation in %.0fms (total %.0fms)",
+        "[startup] imported A2A nodes in %.0fms (total %.0fms)",
         (time.perf_counter() - t) * 1000,
         _elapsed(),
     )
 
     t = time.perf_counter()
     g = StateGraph(ChatState)
-    g.add_node("planner", normalize_intent_planner)
-    g.add_node("entity_resolver", entity_resolver)
-    g.add_node("tool_router", tool_router)
-    g.add_node("tool_executor", tool_executor)
-    g.add_node("tool_observer", tool_observer)
+    g.add_node("orchestrator", orchestrator_node)
+    g.add_node("plan_executor", plan_executor_node)
     g.add_node("answer_generator", answer_generator)
     g.add_node("evaluation", evaluation)
     g.add_node("reflection", reflection_node)
     g.add_node("clarify", clarify_node)
 
-    g.set_entry_point("planner")
+    g.set_entry_point("orchestrator")
     g.add_conditional_edges(
-        "planner",
-        route_after_planner,
-        {"entity_resolver": "entity_resolver", "reflection": "reflection", "clarify": "clarify"},
+        "orchestrator",
+        route_after_orchestrator,
+        {"plan_executor": "plan_executor", "reflection": "reflection"},
     )
     g.add_conditional_edges(
-        "entity_resolver",
-        route_after_entity,
-        {"tool_router": "tool_router", "reflection": "reflection", "clarify": "clarify"},
+        "plan_executor",
+        route_after_plan_executor,
+        {"clarify": "clarify", "answer_generator": "answer_generator", "reflection": "reflection"},
     )
-    g.add_edge("tool_router", "tool_executor")
-    g.add_edge("tool_executor", "tool_observer")
-    g.add_edge("tool_observer", "answer_generator")
     g.add_edge("answer_generator", "evaluation")
-    g.add_conditional_edges(
-        "evaluation",
-        route_after_evaluation,
-        {"end": END, "tool_router": "tool_router", "reflection": "reflection"},
-    )
+    g.add_conditional_edges("evaluation", route_after_evaluation, {"end": END})
     g.add_edge("reflection", END)
     g.add_edge("clarify", END)
 
@@ -172,13 +132,14 @@ def invoke_agent(
         "needs_clarification": False,
         "clarification_question": "",
         "ambiguous_entities": {},
+        "plan": {},
     }
     graph = get_compiled_graph()
     first_turn = not _first_invoke_complete
     if first_turn:
         logger.info(
-            "[startup] calling graph.invoke — next logs are planner → entity_resolver → "
-            "tools → answer_generator; httpx lines are Trello/OpenAI HTTP",
+            "[startup] calling graph.invoke — next logs are orchestrator → plan_executor → "
+            "answer; httpx lines are Trello/OpenAI HTTP",
         )
     t_run = time.perf_counter()
     out = graph.invoke(initial)

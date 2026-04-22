@@ -57,11 +57,17 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     intent = out.get("intent")
     ev = out.get("evaluation_result") or {}
+    pt = out.get("plan_trace") or []
+    last_step = pt[-1] if isinstance(pt, list) and pt else {}
     trace = {
         "retries": out.get("evaluation_retry_count", 0),
         "tool": out.get("selected_tool"),
         "evaluation": ev.get("status"),
         "reason": ev.get("reason"),
+        "plan_id": (out.get("parsed_response") or {}).get("plan_id") if isinstance(out.get("parsed_response"), dict) else None,
+        "plan_step": last_step.get("step_id") if isinstance(last_step, dict) else None,
+        "plan_agent": last_step.get("agent") if isinstance(last_step, dict) else None,
+        "plan_status": last_step.get("status") if isinstance(last_step, dict) else None,
     }
     log_event(logger, log_id, "chat_end", request_id=str(rid), intent=intent, evaluation=ev.get("status"))
 

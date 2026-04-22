@@ -1,4 +1,4 @@
-"""Working memory across CLI turns — built from parsed_response + entities."""
+"""Working memory across CLI turns — built from parsed_response + plan results."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ def empty_memory() -> dict[str, Any]:
         "last_cards": [],  # [{name, list, id?}]
         "last_card_id": None,
         "last_card_name": None,
-        "pending_clarify": None,  # {kind, candidates, original_question}
+        "pending_clarify": None,
+        "pending_plan": None,  # {plan: dict, ...} — A2A resume
     }
 
 
@@ -48,6 +49,9 @@ def memory_summary_for_planner(mem: dict[str, Any] | None) -> str:
                 )
     if mem.get("last_card_id"):
         lines.append(f"last_focused_card_id={mem.get('last_card_id')} name={mem.get('last_card_name')!r}")
+    pp = mem.get("pending_plan")
+    if isinstance(pp, dict) and pp.get("plan"):
+        lines.append("pending_plan: present (continuation expected for blocked step)")
     pc = mem.get("pending_clarify")
     if isinstance(pc, dict) and pc.get("kind"):
         amb = pc.get("ambiguous") or {}
@@ -72,7 +76,7 @@ def extract_from_parsed_and_entities(
     entities: dict[str, Any],
     intent: str,
 ) -> dict[str, Any]:
-    """Return fields to merge into session memory after a successful turn."""
+    """Return fields to merge into session memory after a successful turn (legacy)."""
     out: dict[str, Any] = {}
     if entities.get("board_id"):
         out["board_id"] = entities.get("board_id")
@@ -119,7 +123,6 @@ def extract_from_parsed_and_entities(
         if cid:
             out["last_card_id"] = cid
             out["last_card_name"] = cd.get("name")
-        # enrich last_cards with this card if missing
         lst = cd.get("list")
         lname = None
         if isinstance(lst, dict):
@@ -131,12 +134,51 @@ def extract_from_parsed_and_entities(
             prev_lc = out.get("last_cards")
             if not isinstance(prev_lc, list):
                 prev_lc = []
-            # avoid dup by id
             ids = {str(x.get("id")) for x in prev_lc if isinstance(x, dict) and x.get("id")}
             if str(cid) not in ids:
                 prev_lc = prev_lc + [row]
             out["last_cards"] = prev_lc
 
+    return out
+
+
+def extract_from_plan_parsed(parsed: dict[str, Any], entities: dict[str, Any]) -> dict[str, Any]:
+    """Memory update from A2A aggregated parsed_response."""
+    out: dict[str, Any] = {}
+    if entities.get("board_id"):
+        out["board_id"] = entities.get("board_id")
+    if entities.get("resolved_board_name"):
+        out["board_name"] = entities.get("resolved_board_name")
+    qb = parsed.get("queried_board")
+    if isinstance(qb, dict) and qb.get("id"):
+        out["board_id"] = qb.get("id")
+    if isinstance(parsed.get("lists"), list) and parsed["lists"]:
+        out["list_map"] = [
+            {"id": x.get("id"), "name": x.get("name")}
+            for x in parsed["lists"]
+            if isinstance(x, dict) and x.get("id")
+        ]
+    if isinstance(parsed.get("cards"), list):
+        cards_out: list[dict[str, Any]] = []
+        for c in parsed["cards"]:
+            if not isinstance(c, dict):
+                continue
+            cards_out.append(
+                {
+                    "id": c.get("id"),
+                    "name": c.get("name"),
+                    "list": c.get("list"),
+                }
+            )
+        if cards_out:
+            out["last_cards"] = cards_out
+            out["last_card_id"] = cards_out[-1].get("id")
+            out["last_card_name"] = cards_out[-1].get("name")
+    if isinstance(parsed.get("card"), dict):
+        cd = parsed["card"]
+        if cd.get("id"):
+            out["last_card_id"] = cd.get("id")
+            out["last_card_name"] = cd.get("name")
     return out
 
 
@@ -160,9 +202,11 @@ def finalize_turn_memory(prev: dict[str, Any] | None, out: dict[str, Any]) -> di
     intent = str(out.get("intent") or "")
     clarification = isinstance(parsed, dict) and parsed.get("clarification")
     ev = out.get("evaluation_result") or {}
+    payload = out.get("pending_plan_payload")
+
     if clarification or out.get("needs_clarification") or ev.get("reason") == "clarification":
         amb = out.get("ambiguous_entities") or {}
-        return set_pending_clarify(
+        m = set_pending_clarify(
             base,
             {
                 "kind": "clarify",
@@ -170,11 +214,22 @@ def finalize_turn_memory(prev: dict[str, Any] | None, out: dict[str, Any]) -> di
                 "ambiguous": amb,
             },
         )
+        if isinstance(payload, dict) and payload.get("plan"):
+            m["pending_plan"] = payload
+        elif isinstance(out.get("plan"), dict) and out.get("plan", {}).get("plan_id"):
+            m["pending_plan"] = {"plan": out["plan"]}
+        return m
+
     if ev.get("status") == "success" and not out.get("error_message"):
-        upd = extract_from_parsed_and_entities(
-            parsed if isinstance(parsed, dict) else {},
-            ent if isinstance(ent, dict) else {},
-            intent,
-        )
-        return clear_pending_clarify(merge_memory(base, upd))
+        upd = extract_from_plan_parsed(parsed if isinstance(parsed, dict) else {}, ent if isinstance(ent, dict) else {})
+        if not upd.get("board_id") and not upd.get("last_cards"):
+            upd = extract_from_parsed_and_entities(
+                parsed if isinstance(parsed, dict) else {},
+                ent if isinstance(ent, dict) else {},
+                intent,
+            )
+        m = clear_pending_clarify(merge_memory(base, upd))
+        m["pending_plan"] = None
+        return m
+
     return base

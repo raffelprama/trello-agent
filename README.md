@@ -20,7 +20,7 @@ pip install -r requirements.txt
 - **Create and activate `.venv` inside `trello_agent`** before running `cli.py` or `uvicorn`.
 - Code on **`/mnt/c/...` (Windows drives from WSL)** is slower for many small Python files than a native Linux filesystem. For daily work, clone or copy the project under `~/` in WSL if startup is still slow.
 - The CLI shows the `>` prompt **immediately**; LangGraph and models load on the **first real message** (one-time cost). You will see a short “Loading agent…” line then — **10–60s** on WSL + `/mnt/c` is common for that first load.
-- Each turn runs the **planner LLM** plus **answer LLM** (and **reflection** on failure). A failed run no longer retries the same routing error three times, but the first successful turn after cold start still pays the import + model cost once.
+- Each turn runs the **orchestrator LLM** (plan DAG) plus **answer LLM** (and **reflection** on failure). The first successful turn after cold start still pays the import + model cost once.
 - **First message / cold start:** structured progress is logged to **stderr** with the prefix **`[startup]`** (LangGraph import steps, `graph.compile`, first `graph.invoke`, first `ChatOpenAI` construction). Your REPL answer still prints on stdout; watch the same terminal for stderr, or run with `python cli.py --verbose` to raise **`app.*`** loggers to DEBUG.
 
 When **`TRELLO_BOARD_ID`** is set but **`BOARD_SCOPE_ONLY=false`**, the resolver still defaults to that board if you do not name one — but if your message **mentions** another board by name (e.g. “Notes GA”, “Welcome Board”), it **detects** that name from the question and queries that board so answers stay in sync (not “one turn behind” the wrong board).
@@ -46,7 +46,9 @@ DELETE_ITEM=false       # set true to allow delete_card (permanent card deletion
 
 Every **Trello** call logs one **`[trello]`** line at **INFO**: method, path, HTTP status, duration, approximate JSON size, and list length or top-level dict keys. Set **`LOG_TRELLO_FULL=true`** in `.env` to also log full request JSON (for `POST`/`PUT`) and response bodies (truncated to **`LOG_MAX_BODY_CHARS`**).
 
-Every **LLM** step logs **`[llm]`** at **INFO**: operation name (`planner`, `answer_generator`, `reflection`), model, duration, and response size. Set **`LOG_LLM_FULL=true`** to log full prompts and responses (truncated). OpenAI’s **`httpx`** lines may still appear separately for the raw HTTP call.
+Every **LLM** step logs **`[llm]`** at **INFO**: operation name (`orchestrator_build_plan`, `orchestrator_resume_plan`, `answer_agent`, `reflection_agent`, …), model, duration, and response size. Set **`LOG_LLM_FULL=true`** to log full prompts and responses (truncated). OpenAI’s **`httpx`** lines may still appear separately for the raw HTTP call.
+
+**Agent-to-agent (A2A)** dispatch logs **`[a2a]`** at **INFO**: `dispatch` (task, from, to, ask) and `reply` (status, data keys, duration). Plan lifecycle logs **`[plan]`**: built plan id + step list, resume hints.
 
 Use **`python cli.py --verbose`** so **`app.*`** loggers emit **DEBUG** (e.g. extra query param detail on Trello).
 
@@ -58,7 +60,7 @@ With **`TRELLO_BOARD_ID`** set and **`BOARD_SCOPE_ONLY=true`** (the default in t
 
 ## Session memory
 
-After each successful tool turn, the graph updates **`memory`**: `board_id`, `board_name`, `list_map`, **`last_cards`** (name + list + id), **`last_card_id`**, and optional **`pending_clarify`** after a clarification question. The planner receives a **memory summary** so phrases like “under Ai2” map to **`get_card_details`** when Ai2 was listed as a card in the previous turn.
+After each successful turn, the graph updates **`memory`**: `board_id`, `board_name`, `list_map`, **`last_cards`**, **`last_card_id`**, optional **`pending_clarify`**, and **`pending_plan`** (serialized Plan DAG) when the user must answer a clarification — the next turn **resumes** that plan via `orchestrator_resume_plan` instead of replanning from scratch.
 
 ## Run API
 
@@ -144,52 +146,42 @@ flowchart TD
     LangGraph --> TrelloAPI[Trello REST API]
 ```
 
-### LangGraph topology (v2)
+### LangGraph topology (A2A)
 
-Flow: **plan** → (**clarify** if needed) → **resolve entities** → (**clarify** if ambiguous) → route → execute → observe → answer → evaluate. On **success** the run ends; on **retry** control returns to `tool_router`; on **give up** → **reflection**. The **clarify** node ends the turn with a question (no tool call).
+Flow: **orchestrator** (build or resume **Plan** DAG from structured LLM output) → **plan_executor** (walks steps, **`[a2a]`** dispatch to specialist agents in `app/agents/`) → **answer** → **evaluate** → **END**, or **clarify** / **reflection** → **END**. Specialists call `app/tools/*` directly; there is no monolithic entity resolver or tool router.
 
 ```mermaid
 flowchart TD
-    Start([START]) --> Planner[normalize_intent_planner]
-    Planner --> RouteP{needs_clarification?}
-    RouteP -->|yes| Clarify[clarify]
-    RouteP -->|no| RouteSkipP{skip_tools?}
-    RouteSkipP -->|yes| Reflection[reflection_node]
-    RouteSkipP -->|no| EntityResolver[entity_resolver]
-    EntityResolver --> RouteE{needs_clarification?}
-    RouteE -->|yes| Clarify
-    RouteE -->|no| RouteSkipE{skip_tools?}
-    RouteSkipE -->|yes| Reflection
-    RouteSkipE -->|no| ToolRouter[tool_router]
-    ToolRouter --> ToolExecutor[tool_executor]
-    ToolExecutor --> ToolObserver[tool_observer]
-    ToolObserver --> AnswerGen[answer_generator]
+    Start([START]) --> Orch[orchestrator_node]
+    Orch --> RouteO{skip_tools?}
+    RouteO -->|yes| Reflection[reflection_node]
+    RouteO -->|no| PE[plan_executor]
+    PE --> RoutePE{route}
+    RoutePE -->|clarify_user| Clarify[clarify]
+    RoutePE -->|error| Reflection
+    RoutePE -->|ok| AnswerGen[answer_generator]
     AnswerGen --> Evaluation[evaluation]
-    Evaluation --> RouteEval{evaluation_result}
-    RouteEval -->|success| EndSuccess([END])
-    RouteEval -->|retry| ToolRouter
-    RouteEval -->|giveup| Reflection
+    Evaluation --> EndSuccess([END])
     Reflection --> EndReflect([END])
     Clarify --> EndClarify([END])
-    ToolExecutor -.-> Trello[(Trello API)]
-    EntityResolver -.-> Trello
+    PE -.-> Bus[AgentBus dispatch]
+    Bus -.-> Trello[(Trello API)]
 ```
 
 **HTTP execution** is implemented under `app/tools/` (member, board, list, card, checklist, action, label) and `app/trello_client.py` (rolling **rate limit** ~100 req / 10s, **429 Retry-After**, retries on 5xx).
 
-**Node roles (short):**
+**Package layout:**
 
-| Node | Role |
+| Piece | Role |
 |------|------|
-| `normalize_intent_planner` | LLM: intent + `entities` + optional clarification; uses **memory** summary |
-| `entity_resolver` | Maps names to IDs; list/card **ambiguity** → clarify |
-| `clarify` | Surfaces a clarification question; **END** |
-| `tool_router` | Maps intent → `selected_tool` + payload |
-| `tool_executor` | Dispatches to `app/tools/*` + `TrelloClient` |
-| `tool_observer` | Normalizes JSON for the answer LLM |
-| `answer_generator` | LLM: reply from `parsed_response` |
-| `evaluation` | HTTP / error checks; retry or reflection |
-| `reflection_node` | LLM: explains failures |
+| `app/agents/orchestrator.py` | **OrchestratorAgent**: `build_plan` / `resume_plan` (structured output; catalog of agents + asks only) |
+| `app/agents/bus.py` | **AgentBus**: registry + `dispatch` with `[a2a]` logging |
+| `app/agents/{member,board,list_agent,card,...}.py` | Specialists: `handle(A2AMessage) -> A2AResponse` |
+| `app/nodes/plan_executor.py` | Resolves `$step.field` refs, handles `need_info` / `clarify_user` / `error` |
+| `clarify` | Surfaces question; persists **`pending_plan`** into **memory** |
+| `answer_generator` | **AnswerAgent**: reply from aggregated `parsed_response` |
+| `evaluation` | Success path for normal completions |
+| `reflection_node` | **ReflectionAgent**: explains failures |
 
 See [`prd_v2.md`](prd_v2.md) for the full API hierarchy and flows.
 

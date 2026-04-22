@@ -103,7 +103,9 @@ def main() -> None:
         memory = out.get("memory") if isinstance(out.get("memory"), dict) else memory
 
         append_turn(session, "assistant", answer)
+        print("="*50)
         print(c(answer, "0"))
+        print("="*50)
 
         parsed = out.get("parsed_response") or {}
         ev = out.get("evaluation_result") or {}
@@ -122,6 +124,10 @@ def main() -> None:
             )
 
         if trace_on:
+            pt = out.get("plan_trace") or []
+            last = pt[-1] if isinstance(pt, list) and pt else {}
+            parsed = out.get("parsed_response") if isinstance(out.get("parsed_response"), dict) else {}
+            plan_id = parsed.get("plan_id") if isinstance(parsed, dict) else None
             # Build entity summary
             parts: list[str] = [
                 f"intent={out.get('intent')}",
@@ -129,6 +135,11 @@ def main() -> None:
                 f"eval={ev.get('status')}",
                 f"retries={out.get('evaluation_retry_count')}",
             ]
+            if plan_id or (isinstance(last, dict) and last.get("step_id")):
+                parts.append(
+                    f"plan_id={plan_id!r} step={last.get('step_id')!r} "
+                    f"agent={last.get('agent')!r} status={last.get('status')!r}",
+                )
             if ent.get("card_name") or ent.get("card_id"):
                 cid = str(ent.get("card_id") or "")
                 parts.append(f"card={ent.get('card_name')!r}({cid[:8]}{'...' if len(cid) > 8 else ''})")
