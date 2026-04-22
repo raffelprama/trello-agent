@@ -8,6 +8,7 @@ from typing import Any
 
 from app.llm import get_chat_model, invoke_chat_logged
 from app.prompt.answer import ANSWER_SYSTEM, format_answer_user
+from app.time_context import format_reference_time_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ class AnswerAgent:
 
         history_text = "\n".join(history_lines) if history_lines else "(none)"
         blob = json.dumps(parsed, ensure_ascii=False, default=str) if parsed else "{}"
+        mem = state.get("memory")
+        reference_time_block = format_reference_time_for_prompt(mem if isinstance(mem, dict) else None)
 
         llm = get_chat_model(0)
         prompt = format_answer_user(
@@ -32,6 +35,7 @@ class AnswerAgent:
             intent=intent,
             blob=blob,
             history_text=history_text,
+            reference_time_block=reference_time_block,
         )
 
         try:

@@ -39,6 +39,7 @@ API_KEY=...             # OpenAI key (or OPENAI_API_KEY)
 MODEL=gpt-4.1
 DELETE_ITEM=false       # set true to allow delete_card (permanent card deletion)
 SESSION_PREFETCH=false  # optional: first-turn prefetch of me/boards/list_map (PRD §9.1)
+REFERENCE_TIMEZONE=      # optional: IANA tz e.g. Asia/Jakarta for "today/tomorrow/overdue" in LLM prompts (overridden by memory.settings.timezone)
 
 # Optional — stderr logging (see Observability below)
 # LOG_TRELLO_FULL=false

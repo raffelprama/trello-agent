@@ -61,6 +61,10 @@ DELETE_ITEM: bool = _env_bool("DELETE_ITEM", False)
 # First-turn warm-up: me + boards + list_map for default/single board (PRD §9.1)
 SESSION_PREFETCH: bool = _env_bool("SESSION_PREFETCH", False)
 
+# IANA timezone for reference clock in LLM prompts (e.g. overdue vs today). Overridden by memory.settings.timezone when set.
+_REFERENCE_TZ_RAW = os.getenv("REFERENCE_TIMEZONE", "").strip()
+REFERENCE_TIMEZONE: str | None = _REFERENCE_TZ_RAW or None
+
 # Observability — every turn logs Trello + LLM at INFO (summary). Set true for full JSON/text bodies in logs.
 LOG_TRELLO_FULL: bool = _env_bool("LOG_TRELLO_FULL", False)
 LOG_LLM_FULL: bool = _env_bool("LOG_LLM_FULL", False)

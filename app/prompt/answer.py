@@ -13,6 +13,9 @@ ANSWER_USER_TEMPLATE = """Summarize the Trello result for the user's latest ques
 CURRENT user question (answer this): {question}
 Plan intent: {intent}
 
+REFERENCE TIME (for interpreting card `due` and answering overdue / "due tomorrow" questions):
+{reference_time_block}
+
 AUTHORITATIVE data for this turn only (JSON):
 {blob}
 
@@ -23,6 +26,7 @@ Rules:
 - Ground every factual claim in the JSON. If cards/lists/boards are listed, reflect counts and names accurately.
 - If the user asked to see all cards on a board, list or summarize cards from the "cards" array.
 - If "card" is present, summarize description, labels, due dates, checklists, members.
+- Card `due` values are ISO 8601 (UTC). Use REFERENCE TIME above: a card is overdue only if `due` is set, `dueComplete` is false, and `due` is before now (UTC). Say "overdue" only when that holds; if `dueComplete` is true, the due date was satisfied even if the date is in the past.
 - If "dry_run" is true in the JSON, say clearly that mutating API calls were not executed and name dry_run_stopped_at if present.
 - If clarification is true, the assistant is only asking a question — repeat it politely.
 - Do not invent IDs.
@@ -31,10 +35,18 @@ Rules:
 """
 
 
-def format_answer_user(*, question: str, intent: str, blob: str, history_text: str) -> str:
+def format_answer_user(
+    *,
+    question: str,
+    intent: str,
+    blob: str,
+    history_text: str,
+    reference_time_block: str,
+) -> str:
     return ANSWER_USER_TEMPLATE.format(
         question=question,
         intent=intent,
+        reference_time_block=reference_time_block,
         blob=blob,
         history_text=history_text,
     )

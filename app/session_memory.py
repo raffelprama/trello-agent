@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.time_context import format_reference_time_for_prompt
+
 
 def empty_memory() -> dict[str, Any]:
     return {
@@ -50,8 +52,9 @@ def merge_memory(prev: dict[str, Any] | None, update: dict[str, Any]) -> dict[st
 
 def memory_summary_for_planner(mem: dict[str, Any] | None) -> str:
     """Compact string for LLM prompt."""
+    header = format_reference_time_for_prompt(mem)
     if not mem:
-        return "(no prior session memory)"
+        return f"{header}\n\n(no prior session memory)"
     lines: list[str] = []
     if mem.get("board_id"):
         lines.append(f"board_id={mem.get('board_id')} name={mem.get('board_name')!r}")
@@ -104,7 +107,8 @@ def memory_summary_for_planner(mem: dict[str, Any] | None) -> str:
             lines.append(
                 f"pending_clarification: {pc.get('kind')!r} — {str(pc.get('question', ''))[:120]}"
             )
-    return "\n".join(lines) if lines else "(empty memory)"
+    body = "\n".join(lines) if lines else "(empty memory)"
+    return f"{header}\n\n{body}"
 
 
 def extract_from_parsed_and_entities(
@@ -149,10 +153,8 @@ def extract_from_parsed_and_entities(
                 }
             )
         out["last_cards"] = cards_out
-        if cards_out:
-            out["last_card_id"] = cards_out[-1].get("id")
-            out["last_card_name"] = cards_out[-1].get("name")
-            out["last_mentioned_card_id"] = cards_out[-1].get("id")
+        # Do not set last_card_id / last_mentioned_card_id from bulk lists — order is arbitrary
+        # and overwrites the user's focused card after get_card_details.
 
     if intent == "get_card_details" and isinstance(parsed.get("card"), dict):
         cd = parsed["card"]
@@ -210,9 +212,7 @@ def extract_from_plan_parsed(parsed: dict[str, Any], entities: dict[str, Any]) -
             )
         if cards_out:
             out["last_cards"] = cards_out
-            out["last_card_id"] = cards_out[-1].get("id")
-            out["last_card_name"] = cards_out[-1].get("name")
-            out["last_mentioned_card_id"] = cards_out[-1].get("id")
+            # Same as legacy path: bulk card lists refresh name cache only, not "focused" ids.
     if isinstance(parsed.get("card"), dict):
         cd = parsed["card"]
         if cd.get("id"):

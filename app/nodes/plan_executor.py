@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 _MAX_INSERT = 8
 
 
+def _memory_card_id(mem: dict[str, Any]) -> Any:
+    """Prefer explicit card_id, then last mentioned/focused (continuation)."""
+    return mem.get("card_id") or mem.get("last_mentioned_card_id") or mem.get("last_card_id")
+
+
 def _resolve_value(val: Any, results: dict[str, dict[str, Any]]) -> Any:
     if not isinstance(val, str):
         return val
@@ -63,6 +68,11 @@ def _merge_memory_into_inputs(
         mk = keymap.get(miss)
         if not mk or m.get(mk):
             continue
+        if miss == "card_id":
+            cid = _memory_card_id(mem)
+            if cid:
+                m[mk] = cid
+                continue
         if mem.get(mk):
             m[mk] = mem[mk]
         else:
@@ -231,6 +241,15 @@ def plan_executor_node(state: ChatState) -> dict[str, Any]:
             hint_for_board = str(resolved.get("board_hint") or resolved.get("name") or "").strip()
             if not (step.agent == "board" and step.ask == "resolve_board" and hint_for_board):
                 resolved["board_id"] = mem.get("board_id")
+
+        if (
+            step.agent == "card"
+            and step.ask != "resolve_card"
+            and not resolved.get("card_id")
+        ):
+            cid = _memory_card_id(mem)
+            if cid:
+                resolved["card_id"] = cid
 
         ctx: dict[str, Any] = {
             "user_text": user_text,

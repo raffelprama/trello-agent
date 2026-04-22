@@ -90,6 +90,8 @@ class BoardAgent(BaseAgent):
                         "name": c.get("name"),
                         "list": lname,
                         "idList": lid,
+                        "due": c.get("due"),
+                        "dueComplete": c.get("dueComplete"),
                     }
                 )
             qb_name = mem_ctx.get("board_name")

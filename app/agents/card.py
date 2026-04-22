@@ -356,6 +356,16 @@ class CardAgent(BaseAgent):
             return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
 
         if not hint:
+            # Continuation: user is editing "this card" after viewing one — use session focus.
+            cid = mem.get("last_mentioned_card_id") or mem.get("last_card_id")
+            cname = mem.get("last_card_name")
+            if cid:
+                return A2AResponse(
+                    task_id=msg.task_id,
+                    frm=self.name,
+                    status="ok",
+                    data={"card_id": cid, "card_name": cname, "list_name": None},
+                )
             return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_hint"])
 
         matches = _match_cards(str(hint), [x for x in lists if isinstance(x, dict)])

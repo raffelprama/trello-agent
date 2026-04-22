@@ -61,6 +61,8 @@ Produce structured output with:
 - reasoning: ordered high-level steps the assistant should take in natural language only (NOT agent.ask names, NOT JSON).
 - required_entities: list of entity types to resolve (e.g. board, list, card, member, label) — use lowercase tokens.
 - suggested_final_intent: a short hint label only (e.g. CARD_MOVE, QUERY_BOARDS, CARD_CREATE) — the planner may override.
+
+The session memory block begins with a reference time (UTC, optional local). Use it when the user says "tomorrow", "today", "overdue", or relative deadlines — reflect that in analysis and reasoning.
 """
 
 
@@ -83,6 +85,9 @@ User message:
 - For create_card: include card_name as a SHORT title string when the user gave one; list_id as "$sx.list_id" from resolve_list.
 - Keep inputs values short. Never copy the entire user message into a single field.
 - Each step's inputs_json field must be a valid JSON object serialized as a string; when a step has no inputs, set inputs_json to {{}} (empty JSON object).
+- Due dates: if the user says "tomorrow", "next Friday", etc., convert to ISO 8601 UTC for `due` on create_card / set_card_due using the reference time at the top of session memory.
+- Overdue / late / past-due questions: include a read step that returns cards with `due` and `dueComplete` (e.g. get_board_cards), then the answer can compare each card to reference UTC; do not assume overdue without that data.
+- Context: if the user just viewed or discussed one card and now says "update the description", "set due", etc. without naming a card, reuse that same card: `resolve_card` with an empty `card_hint` is OK (session memory supplies focus), or reference the prior step's `card_id`. Do not switch to a different card from a bulk list unless the user names it.
 """
 
 RESUME_PLAN_SYSTEM = "Structured resume only."

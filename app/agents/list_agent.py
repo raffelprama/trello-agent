@@ -72,7 +72,16 @@ class ListAgent(BaseAgent):
             st, cards = list_tools.get_list_cards(str(list_id), **params)
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
-            out = [{"id": c.get("id"), "name": c.get("name")} for c in cards if isinstance(c, dict)]
+            out = [
+                {
+                    "id": c.get("id"),
+                    "name": c.get("name"),
+                    "due": c.get("due"),
+                    "dueComplete": c.get("dueComplete"),
+                }
+                for c in cards
+                if isinstance(c, dict)
+            ]
             return A2AResponse(
                 task_id=msg.task_id,
                 frm=self.name,
