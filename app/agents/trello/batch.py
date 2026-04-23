@@ -8,6 +8,7 @@ from typing import Any
 
 from app.agents.base import A2AMessage, A2AResponse, BaseAgent
 from app.tools import card as card_tools
+from app.tools import checklist as cl_tools
 from app.tools import list_ops as list_tools
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,10 @@ class BatchAgent(BaseAgent):
             return self._archive_list_cards(msg, ins)
         if ask == "create_cards":
             return self._create_cards(msg, ins)
+        if ask == "mark_checklist_items_complete":
+            return self._mark_checklist_items_complete(msg, ins)
+        if ask == "mark_card_items_complete":
+            return self._mark_card_items_complete(msg, ins)
 
         return A2AResponse(
             task_id=msg.task_id,
@@ -149,3 +154,98 @@ class BatchAgent(BaseAgent):
             list_id, len(success), len(errors),
         )
         return self._summary_response(msg, list_id, success, errors)
+
+    def _mark_checklist_items_complete(self, msg: A2AMessage, ins: dict[str, Any]) -> A2AResponse:
+        checklist_id = str(ins.get("checklist_id") or "").strip()
+        card_id = str(ins.get("card_id") or "").strip()
+        if not checklist_id:
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["checklist_id"])
+        if not card_id:
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
+
+        want = str(ins.get("state") or "complete").lower()
+        if want not in ("complete", "incomplete"):
+            want = "complete"
+
+        st, items = cl_tools.get_checkitems(checklist_id)
+        if st >= 400:
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st} fetching checklist items")
+
+        success, errors = [], []
+        for item in [x for x in items if isinstance(x, dict)]:
+            item_id = item.get("id")
+            if not item_id:
+                continue
+            current = str(item.get("state") or "").lower()
+            if current == want:
+                success.append({"id": item_id, "name": item.get("name"), "skipped": True})
+                continue
+            st2, _ = cl_tools.set_checkitem_state(card_id, item_id, want)
+            if st2 < 400:
+                success.append({"id": item_id, "name": item.get("name")})
+            else:
+                errors.append({"id": item_id, "name": item.get("name"), "error": f"HTTP {st2}"})
+
+        logger.info(
+            "[batch] mark_checklist_items_complete checklist_id=%s state=%s success=%d errors=%d",
+            checklist_id, want, len(success), len(errors),
+        )
+        return A2AResponse(
+            task_id=msg.task_id,
+            frm=self.name,
+            status="ok",
+            data={"checklist_id": checklist_id, "card_id": card_id, "state": want,
+                  "success_count": len(success), "error_count": len(errors),
+                  "results": success[:50], "errors": errors[:20]},
+        )
+
+    def _mark_card_items_complete(self, msg: A2AMessage, ins: dict[str, Any]) -> A2AResponse:
+        card_id = str(ins.get("card_id") or "").strip()
+        if not card_id:
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["card_id"])
+
+        want = str(ins.get("state") or "complete").lower()
+        if want not in ("complete", "incomplete"):
+            want = "complete"
+
+        st, checklists = card_tools.get_card_checklists(card_id)
+        if st >= 400:
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st} fetching checklists")
+
+        success, errors = [], []
+        checklist_count = 0
+        for cl in [x for x in checklists if isinstance(x, dict)]:
+            cl_id = cl.get("id")
+            if not cl_id:
+                continue
+            checklist_count += 1
+            st2, items = cl_tools.get_checkitems(cl_id)
+            if st2 >= 400:
+                errors.append({"checklist": cl.get("name"), "error": f"HTTP {st2} fetching items"})
+                continue
+            for item in [x for x in items if isinstance(x, dict)]:
+                item_id = item.get("id")
+                if not item_id:
+                    continue
+                current = str(item.get("state") or "").lower()
+                if current == want:
+                    success.append({"id": item_id, "name": item.get("name"), "checklist": cl.get("name"), "skipped": True})
+                    continue
+                st3, _ = cl_tools.set_checkitem_state(card_id, item_id, want)
+                if st3 < 400:
+                    success.append({"id": item_id, "name": item.get("name"), "checklist": cl.get("name")})
+                else:
+                    errors.append({"id": item_id, "name": item.get("name"), "checklist": cl.get("name"), "error": f"HTTP {st3}"})
+
+        logger.info(
+            "[batch] mark_card_items_complete card_id=%s state=%s checklists=%d success=%d errors=%d",
+            card_id, want, checklist_count, len(success), len(errors),
+        )
+        return A2AResponse(
+            task_id=msg.task_id,
+            frm=self.name,
+            status="ok",
+            data={"card_id": card_id, "state": want, "checklist_count": checklist_count,
+                  "success_count": len(success), "error_count": len(errors),
+                  "results": success[:50], "errors": errors[:20]},
+        )

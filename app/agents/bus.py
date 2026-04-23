@@ -85,6 +85,7 @@ def create_default_bus(factory: Callable[[], dict[str, BaseAgent]] | None = None
     from app.agents.trello.attachment_agent import AttachmentAgent
     from app.agents.trello.batch import BatchAgent
     from app.agents.trello.board import BoardAgent
+    from app.agents.trello.scaffold import ScaffoldAgent
     from app.agents.trello.card import CardAgent
     from app.agents.trello.checklist import ChecklistAgent
     from app.agents.trello.comment import CommentAgent
@@ -117,6 +118,7 @@ def create_default_bus(factory: Callable[[], dict[str, BaseAgent]] | None = None
             "notification": NotificationAgent(),
             "attachment": AttachmentAgent(),
             "batch": BatchAgent(),
+            "scaffold": ScaffoldAgent(),
         }
     for name, ag in agents.items():
         bus.register(name, ag)

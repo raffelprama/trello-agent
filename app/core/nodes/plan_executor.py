@@ -188,6 +188,8 @@ def _aggregate_parsed(plan: Plan, results: dict[str, dict[str, Any]]) -> dict[st
             out["queried_board"] = {"id": b.get("id"), "name": b.get("name")}
         if "board_summary" in slim:
             out["board_summary"] = slim["board_summary"]
+        if "scaffold_results" in slim:
+            out["scaffold_results"] = slim["scaffold_results"]
     return out
 
 

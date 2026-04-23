@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.agents.base import A2AMessage, A2AResponse, BaseAgent
@@ -9,6 +10,10 @@ from app.utils.resolution import match_dicts_by_name
 from app.tools import board as board_tools
 from app.tools import card as card_tools
 from app.tools import label as label_tools
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
 class LabelAgent(BaseAgent):
@@ -24,7 +29,7 @@ class LabelAgent(BaseAgent):
         if ask == "resolve_label":
             if not board_id:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["board_id"])
-            hint = str(ins.get("label_name") or ins.get("name") or "").strip()
+            hint = str(ins.get("label_name") or ins.get("name") or ins.get("label_hint") or "").strip()
             st, labels = board_tools.get_board_labels(str(board_id))
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
@@ -32,14 +37,24 @@ class LabelAgent(BaseAgent):
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["label_name"])
             dict_labels = [lb for lb in labels if isinstance(lb, dict)]
             hit = match_dicts_by_name(hint, dict_labels, name_key="name")
+            if not hit:
+                # Fallback: match by color (handles unnamed labels like color="red")
+                hit = next(
+                    (lb for lb in dict_labels if _norm(str(lb.get("color") or "")) == _norm(hint)),
+                    None,
+                )
             if hit:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"label_id": hit.get("id"), "label": hit})
+            label_display = ", ".join(
+                (x.get("name") or x.get("color") or "?")
+                for x in dict_labels if x.get("name") or x.get("color")
+            )
             return A2AResponse(
                 task_id=msg.task_id,
                 frm=self.name,
                 status="clarify_user",
                 data={"labels": labels},
-                clarification="Which label? " + ", ".join(str(x.get("name")) for x in labels if isinstance(x, dict))[:240],
+                clarification=f"Which label? Options: {label_display[:280]}",
             )
 
         if ask == "add_label_to_card":

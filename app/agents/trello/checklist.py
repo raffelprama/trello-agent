@@ -58,14 +58,17 @@ class ChecklistAgent(BaseAgent):
                         task_id=msg.task_id,
                         frm=self.name,
                         status="ok",
-                        data={"checklist_id": ch.get("id"), "checklist": ch},
+                        data={"checklist_id": ch.get("id"), "checklist": ch, "created": False},
                     )
+            # Checklist not found — auto-create so "add item to checklist X" works even when X is new
+            st2, ch = card_tools.post_card_checklist(str(card_id), name_hint)
+            if st2 >= 400:
+                return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st2} creating checklist")
             return A2AResponse(
                 task_id=msg.task_id,
                 frm=self.name,
-                status="clarify_user",
-                data={"checklists": rows},
-                clarification="Which checklist? Available: " + ", ".join(str(c.get("name")) for c in rows if isinstance(c, dict))[:300],
+                status="ok",
+                data={"checklist_id": ch.get("id"), "checklist": ch, "created": True},
             )
 
         if ask == "resolve_check_item":

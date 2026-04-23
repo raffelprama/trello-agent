@@ -16,7 +16,11 @@ CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_SET_DUE_COMPLETE, CARD_CREATE,
 - list: resolve_list | get_list_cards | create_list | update_list | archive_list | set_list_closed | set_list_pos
 - card: resolve_card | get_card_details | create_card | update_card | move_card | delete_card | set_card_closed | remove_card_member | add_card_member | set_card_due | set_card_due_complete | get_card_custom_field_items | set_card_custom_field_item
 - checklist: list_checklists | resolve_checklist | resolve_check_item | set_checkitem_state | create_checkitem | create_checklist | delete_checkitem
+  resolve_checklist: finds existing checklist by name on a card; auto-creates it if not found (find-or-create). inputs: card_id, checklist_name
+  create_checklist: ONLY use when user explicitly asks to create a brand-new checklist with no items. inputs: card_id, name
+  RULE: for "add item to checklist X", always use resolve_checklist (not create_checklist) — it finds the existing one or creates it.
 - label: resolve_label | add_label_to_card | remove_label_from_card | create_label_on_board | get_label
+  resolve_label inputs: board_id, label_name (the label name or color, e.g. "red", "D-1", "Priority")
 - comment: list_comments | create_comment | update_comment | delete_comment
 - custom_field: get_board_custom_fields | create_custom_field | get_card_custom_field_items | set_card_custom_field_value | delete_custom_field
 - webhook: list_webhooks | create_webhook | get_webhook | delete_webhook
@@ -25,8 +29,18 @@ CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_SET_DUE_COMPLETE, CARD_CREATE,
 - notification: list_notifications | mark_all_notifications_read | update_notification
 - attachment: list_attachments | add_url_attachment | delete_attachment
 - batch: mark_list_cards_complete | archive_list_cards | create_cards
-  (handles iteration internally — preferred for bulk ops on an entire list)
+         | mark_checklist_items_complete | mark_card_items_complete
+  (handles iteration internally — preferred for bulk ops on an entire list or checklist)
   create_cards inputs: list_id, names (JSON array of card name strings, e.g. ["task1","task2"])
+  mark_checklist_items_complete inputs: checklist_id, card_id, state ("complete"|"incomplete", default "complete")
+  mark_card_items_complete inputs: card_id, state ("complete"|"incomplete", default "complete")
+- scaffold: build_task_scaffold | set_smart_due
+  build_task_scaffold: AI-generates card names, descriptions, checklists, due dates, and member assignments
+    inputs: list_id, topic (task/project subject), n_cards (int, default 1),
+            n_checklists (int, optional), n_items (int, optional),
+            board_id (pass $s0.board_id — enables auto member assignment)
+  set_smart_due: AI estimates realistic due date for an existing card based on its content/complexity
+    inputs: card_id
 - _foreach: apply — iterate a prior step's collection; dispatch one agent action per item
   inputs_json: {"source":"$sX.cards","item_id_field":"id","key_as":"card_id","agent":"card","ask":"<ask>","extra_inputs":{<literal fields>},"limit":<optional int — first N items only>}
 
@@ -43,11 +57,27 @@ Typical flows:
 - "mark [card] as done" / "mark complete" / "set due complete" / "[card] is finished" → CARD_SET_DUE_COMPLETE: resolve_board -> resolve_card -> card set_card_due_complete(dueComplete=true) (Trello due badge; does NOT move the card or checklist items)
 - If the user is vague ("set [card] to done", "[card] is done") and session memory shows a list named "Done" on the board, the analyzer must ask for clarification before planning — do not guess move vs mark-complete in the planner alone
 - "add checklist [name] to [card]": resolve_board -> resolve_card -> checklist create_checklist(name)
-- "add item [X] to [checklist] on [card]": resolve_board -> resolve_card -> resolve_checklist -> create_checkitem
+- "add item [X] to [checklist] on [card]" / "set checklist [name] item [X]": resolve_board -> resolve_card -> checklist resolve_checklist(checklist_name=hint) -> checklist create_checkitem(checklist_id=$sN.checklist_id)
 - "check off [item] on [card]": resolve_board -> resolve_card -> resolve_check_item (by card_id+item_name) -> set_checkitem_state
-- "add label [name] to [card]": resolve_board -> resolve_card -> resolve_label -> add_label_to_card
+- "add label [name] to [card]": resolve_board -> resolve_card -> label resolve_label(label_name=hint) -> label add_label_to_card
 - "assign [person] to [card]": resolve_board -> resolve_card -> member resolve_member -> card add_card_member
 - "summarize the board" / "board status" / "how is the board doing" / "progress report" / "I want to summarize": resolve_board -> board get_board_summary (returns completion %, per-member stats, due-date breakdown, recommendations)
+- "build me a card for X" / "create a task scaffold for Y" / "generate N cards with checklists for Z":
+    resolve_board -> resolve_list -> scaffold build_task_scaffold(list_id=$s1.list_id, board_id=$s0.board_id, topic="Z", n_cards=N)
+  - Always pass board_id=$s0.board_id — enables auto due date + auto member assignment
+  - Only specify n_checklists/n_items if the user explicitly stated a count; otherwise omit (AI decides)
+  - topic must be a short subject phrase (e.g. "build a website", "marketing campaign")
+- "give this card a due date" / "set realistic due for card X" / "when should card X be done":
+    resolve_board -> resolve_card -> scaffold set_smart_due(card_id=$s1.card_id)
+- "add [color/name] label to card X": resolve_board -> resolve_card -> label resolve_label(label_name=hint) -> label add_label_to_card
+- "set all items in checklist X to done" / "check off checklist X":
+    resolve_board -> resolve_card -> resolve_checklist -> batch mark_checklist_items_complete(checklist_id=$s2.checklist_id, card_id=$s1.card_id)
+- "uncheck all items in checklist X":
+    resolve_board -> resolve_card -> resolve_checklist -> batch mark_checklist_items_complete(checklist_id=$s2.checklist_id, card_id=$s1.card_id, state="incomplete")
+- "set all checklist items on card X to done" / "mark everything on card X complete":
+    resolve_board -> resolve_card -> batch mark_card_items_complete(card_id=$s1.card_id)
+- "uncheck everything on card X":
+    resolve_board -> resolve_card -> batch mark_card_items_complete(card_id=$s1.card_id, state="incomplete")
 Do NOT put full user sentences into card_hint — use a short token from the user request (card title, list name, board name).
 """
 
@@ -127,9 +157,37 @@ Blocked step (if any): {blocked_step_id} ask={blocked_ask}
 Latest user message (may be the answer):
 {user_text}
 
-Decide:
-- If the user is continuing/clarifying (picking an option, giving a list name, confirming), set is_continuation=true and patch_inputs_json to a JSON object string with new fields (e.g. {{"list_hint":"Done"}}).
-- If the user started a completely new task, set abandon_pending=true.
+Decide — read BOTH signal types below before choosing:
+
+**NEW TASK signals → abandon_pending=true (ignore the pending plan entirely)**
+Any of these means the user started a fresh request, even if the message contains a name that could answer the blocked step:
+- Complete sentence with a primary action verb directed at a Trello resource: "I want to see…", "show me…", "create…", "add…", "move…", "get…", "list…", "i want to…", "can you…"
+- Multi-word request describing what to do AND what to do it on (e.g. "i want to see card under Test board", "show all cards in On Going")
+- Any phrasing using first-person intent: "I want", "I'd like", "let me see", "saya mau", "tampilkan"
+- A full question about Trello: "what cards are…", "how many…", "which board…"
+→ Set abandon_pending=true, patch_inputs_json="{{}}"
+
+**CONTINUATION signals → is_continuation=true**
+Only treat as a continuation when the message is a SHORT, DIRECT answer to the specific blocked step question — and contains NO independent action verb or resource reference beyond answering that one question:
+- Single word or short phrase: a name, a color, a number, "yes", "no", "confirm", "ok"
+- Picking from a list the assistant presented: "the second one", "Done", "On Going", "red"
+- Affirmation or negation to a yes/no question: "yeah go ahead", "no cancel it"
+→ Set is_continuation=true, patch_inputs_json with the answered field
+
+**Examples**
+Blocked step: resolve_board, ask=resolve_board
+- "Test" → continuation (just a board name)
+- "i want to see card under Test board" → NEW TASK (full intent sentence with action verb + resource)
+- "use the Test board" → NEW TASK (action-phrased intent)
+- "Test board" → continuation (just naming the board)
+
+Blocked step: resolve_list, ask=resolve_list
+- "Done" → continuation
+- "show me cards in Done" → NEW TASK
+- "the Done list" → continuation
+
+**Rule**: If unsure, prefer abandon_pending=true. It is safer to rebuild a plan than to misinterpret a new request.
+
 - patch_inputs_json must be valid JSON as a string; use {{}} if nothing to patch.
 """
 

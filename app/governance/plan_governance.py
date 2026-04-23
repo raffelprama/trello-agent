@@ -51,6 +51,10 @@ MUTATING_STEPS: frozenset[tuple[str, str]] = frozenset(
         ("batch", "mark_list_cards_complete"),
         ("batch", "archive_list_cards"),
         ("batch", "create_cards"),
+        ("batch", "mark_checklist_items_complete"),
+        ("batch", "mark_card_items_complete"),
+        ("scaffold", "build_task_scaffold"),
+        ("scaffold", "set_smart_due"),
         ("_foreach", "apply"),
     }
 )
