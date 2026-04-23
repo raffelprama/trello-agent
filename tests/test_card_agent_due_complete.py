@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.base import A2AMessage, new_task_id
-from app.agents.card import CardAgent
+from app.agents.trello.card import CardAgent
 
 
 def test_set_card_due_complete_skips_when_already_set(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -18,8 +18,8 @@ def test_set_card_due_complete_skips_when_already_set(monkeypatch: pytest.Monkey
         calls.append((cid, dc))
         return 200, {"id": cid, "dueComplete": dc}
 
-    monkeypatch.setattr("app.agents.card.card_tools.get_card_details", get_details)
-    monkeypatch.setattr("app.agents.card.card_tools.set_due_complete", set_due_complete)
+    monkeypatch.setattr("app.agents.trello.card.card_tools.get_card_details", get_details)
+    monkeypatch.setattr("app.agents.trello.card.card_tools.set_due_complete", set_due_complete)
 
     agent = CardAgent()
     msg = A2AMessage(
@@ -46,8 +46,8 @@ def test_set_card_due_complete_calls_api_when_needed(monkeypatch: pytest.MonkeyP
         calls.append((cid, dc))
         return 200, {"id": cid, "dueComplete": dc}
 
-    monkeypatch.setattr("app.agents.card.card_tools.get_card_details", get_details)
-    monkeypatch.setattr("app.agents.card.card_tools.set_due_complete", set_due_complete)
+    monkeypatch.setattr("app.agents.trello.card.card_tools.get_card_details", get_details)
+    monkeypatch.setattr("app.agents.trello.card.card_tools.set_due_complete", set_due_complete)
 
     agent = CardAgent()
     msg = A2AMessage(

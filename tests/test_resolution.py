@@ -1,6 +1,6 @@
 """Resolution helpers (PRD §5.1 tiers)."""
 
-from app.resolution import best_match_by_name, levenshtein, match_dicts_by_name
+from app.utils.resolution import best_match_by_name, levenshtein, match_dicts_by_name
 
 
 def test_levenshtein() -> None:

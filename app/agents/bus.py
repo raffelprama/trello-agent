@@ -82,19 +82,19 @@ def _preview_dict(d: Any, max_len: int = 400) -> str:
 
 def create_default_bus(factory: Callable[[], dict[str, BaseAgent]] | None = None) -> AgentBus:
     """Build bus with Trello specialists only (orchestrator/answer/reflection are separate)."""
-    from app.agents.attachment_agent import AttachmentAgent
-    from app.agents.board import BoardAgent
-    from app.agents.card import CardAgent
-    from app.agents.checklist import ChecklistAgent
-    from app.agents.comment import CommentAgent
-    from app.agents.custom_field_agent import CustomFieldAgent
-    from app.agents.label import LabelAgent
-    from app.agents.list_agent import ListAgent
-    from app.agents.member import MemberAgent
-    from app.agents.notification_agent import NotificationAgent
-    from app.agents.organization_agent import OrganizationAgent
-    from app.agents.search_agent import SearchAgent
-    from app.agents.webhook_agent import WebhookAgent
+    from app.agents.trello.attachment_agent import AttachmentAgent
+    from app.agents.trello.board import BoardAgent
+    from app.agents.trello.card import CardAgent
+    from app.agents.trello.checklist import ChecklistAgent
+    from app.agents.trello.comment import CommentAgent
+    from app.agents.trello.custom_field_agent import CustomFieldAgent
+    from app.agents.trello.label import LabelAgent
+    from app.agents.trello.list_agent import ListAgent
+    from app.agents.trello.member import MemberAgent
+    from app.agents.trello.notification_agent import NotificationAgent
+    from app.agents.trello.organization_agent import OrganizationAgent
+    from app.agents.trello.search_agent import SearchAgent
+    from app.agents.trello.webhook_agent import WebhookAgent
 
     bus = AgentBus()
     agents: dict[str, BaseAgent]

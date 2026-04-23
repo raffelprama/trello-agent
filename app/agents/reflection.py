@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from app.llm import get_chat_model, invoke_chat_logged
+from app.core.llm import get_chat_model, invoke_chat_logged
 from app.prompt.reflection import REFLECTION_SYSTEM, format_reflection_user
 
 logger = logging.getLogger(__name__)

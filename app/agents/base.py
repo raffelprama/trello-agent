@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from app.llm import get_chat_model, invoke_chat_logged
+from app.core.llm import get_chat_model, invoke_chat_logged
 
 Status = Literal["ok", "need_info", "clarify_user", "error"]
 

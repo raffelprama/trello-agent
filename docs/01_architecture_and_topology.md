@@ -26,7 +26,7 @@ The HTTP surface is **stateless** except for the `memory` dict the client sends 
 
 | Layer | Location | Role |
 |--------|-----------|------|
-| **Graph nodes** | [`app/nodes/`](../app/nodes/) | LangGraph steps: orchestrator, plan executor, answer, evaluation, reflection, clarify |
+| **Graph nodes** | [`app/core/nodes/`](../app/core/nodes/) | LangGraph steps: orchestrator, plan executor, answer, evaluation, reflection, clarify |
 | **Orchestration LLM** | [`app/agents/orchestrator.py`](../app/agents/orchestrator.py) | Builds or resumes a **Plan** (DAG of steps); does not call Trello |
 | **Specialist agents** | [`app/agents/*.py`](../app/agents/) | `handle(A2AMessage) -> A2AResponse`; board, list, card, checklist, etc. |
 | **Agent bus** | [`app/agents/bus.py`](../app/agents/bus.py) | Registry and `dispatch` with structured `[a2a]` logging |

@@ -13,7 +13,7 @@ The **OrchestratorAgent** in [`../app/agents/orchestrator.py`](../app/agents/orc
 - **`depends_on`** — list of `step_id`s that must complete first
 - **`outputs`** — declared output fields (documentation / consistency for the LLM)
 
-The orchestrator **does not** call Trello; it only emits the plan. Execution is entirely in [`../app/nodes/plan_executor.py`](../app/nodes/plan_executor.py).
+The orchestrator **does not** call Trello; it only emits the plan. Execution is entirely in [`../app/core/nodes/plan_executor.py`](../app/core/nodes/plan_executor.py).
 
 ### Reference resolution
 
@@ -54,7 +54,7 @@ The executor loop branches on `A2AResponse.status`:
 
 ## Orchestrator node (LangGraph)
 
-[`../app/nodes/orchestrator_node.py`](../app/nodes/orchestrator_node.py):
+[`../app/core/nodes/orchestrator_node.py`](../app/core/nodes/orchestrator_node.py):
 
 - Optionally runs **session prefetch** when `SESSION_PREFETCH` is true and memory is not yet prefetched (`run_prefetch`).
 - Reads **`memory.pending_plan`** for **resume** (`resume_plan`) or **destructive confirmation** (user must confirm with yes-style text; see [`plan_governance.py`](../app/plan_governance.py)).

@@ -1,6 +1,6 @@
 """Session memory merge and extraction."""
 
-from app.session_memory import empty_memory, extract_from_plan_parsed, merge_memory
+from app.session.session_memory import empty_memory, extract_from_plan_parsed, merge_memory
 
 
 def test_merge_memory_settings_deep() -> None:

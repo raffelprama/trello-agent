@@ -15,7 +15,7 @@ On **successful** evaluation without clarification errors, memory is enriched vi
 
 ## Clarification path
 
-When specialists return `clarify_user` or the executor requests **destructive confirmation**, the graph routes to the **`clarify`** node ([`../app/nodes/clarify.py`](../app/nodes/clarify.py)):
+When specialists return `clarify_user` or the executor requests **destructive confirmation**, the graph routes to the **`clarify`** node ([`../app/core/nodes/clarify.py`](../app/core/nodes/clarify.py)):
 
 - Sets `answer` to the clarification question.
 - Merges **`pending_plan_payload`** into memory via `merge_pending_plan` ([`../app/agents/clarification.py`](../app/agents/clarification.py)) so the next turn can **`resume_plan`**.
@@ -24,7 +24,7 @@ When specialists return `clarify_user` or the executor requests **destructive co
 
 ## Orchestrator resume and destructive confirm
 
-[`../app/nodes/orchestrator_node.py`](../app/nodes/orchestrator_node.py):
+[`../app/core/nodes/orchestrator_node.py`](../app/core/nodes/orchestrator_node.py):
 
 - If `pending_plan.awaiting_destructive_confirm` and the user message matches **`user_confirms_destructive`** ([`plan_governance.py`](../app/plan_governance.py)), the plan is re-emitted with `destructive_confirmed_for_plan` set in memory and execution proceeds.
 - If the user does not confirm, pending plan may be cleared and a fresh `build_plan` runs.

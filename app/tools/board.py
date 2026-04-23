@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.trello_client import TrelloClient, get_client
+from app.services.trello_client import TrelloClient, get_client
 
 
 def get_board(board_id: str, *, client: TrelloClient | None = None, **params: Any) -> tuple[int, dict[str, Any]]:

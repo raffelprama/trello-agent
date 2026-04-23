@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.trello_client import TrelloClient, get_client
+from app.services.trello_client import TrelloClient, get_client
 
 
 def get_my_notifications(*, client: TrelloClient | None = None, **params: Any) -> tuple[int, list[dict[str, Any]]]:

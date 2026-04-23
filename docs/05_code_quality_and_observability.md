@@ -60,7 +60,7 @@ Clients can log or persist this for debugging without enabling full body logging
 
 ## Evaluation node
 
-[`../app/nodes/evaluation.py`](../app/nodes/evaluation.py) runs after **`answer_generator`** on the happy path:
+[`../app/core/nodes/evaluation.py`](../app/core/nodes/evaluation.py) runs after **`answer_generator`** on the happy path:
 
 - Treats **HTTP 2xx** (when `http_status` set) or **observer-only** path (`http_status==0` and no error) as success.
 - **`giveup`** for certain error substrings (`requires`, `Missing `, `Unknown tool`, `Unknown routing`) without wasting retries.

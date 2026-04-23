@@ -1,7 +1,7 @@
 """Plan governance flags."""
 
 from app.agents.base import Plan, PlanStep, new_plan_id
-from app.plan_governance import (
+from app.governance.plan_governance import (
     is_destructive,
     is_mutating,
     plan_has_destructive,

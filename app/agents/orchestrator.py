@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.base import Plan, PlanStep, new_plan_id, plan_from_dict, plan_to_dict
-from app.llm import get_chat_model, invoke_chat_logged
+from app.core.llm import get_chat_model, invoke_chat_logged
 from app.prompt.orchestrator import (
     ANALYZE_SYSTEM,
     BUILD_PLAN_SYSTEM,
@@ -18,7 +18,7 @@ from app.prompt.orchestrator import (
     format_build_plan_user,
     format_resume_plan_user,
 )
-from app.session_memory import memory_summary_for_planner
+from app.session.session_memory import memory_summary_for_planner
 
 logger = logging.getLogger(__name__)
 

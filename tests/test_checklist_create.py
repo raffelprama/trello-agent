@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.base import A2AMessage, new_task_id
-from app.agents.checklist import ChecklistAgent
+from app.agents.trello.checklist import ChecklistAgent
 
 
 def test_create_checklist_need_info(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,7 +37,7 @@ def test_create_checklist_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     def post_checklist(cid: str, name: str) -> tuple[int, dict]:
         return 200, {"id": "cl-new", "name": name, "idCard": cid}
 
-    monkeypatch.setattr("app.agents.checklist.card_tools.post_card_checklist", post_checklist)
+    monkeypatch.setattr("app.agents.trello.checklist.card_tools.post_card_checklist", post_checklist)
 
     agent = ChecklistAgent()
     msg = A2AMessage(

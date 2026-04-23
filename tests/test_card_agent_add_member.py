@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from app.agents.base import A2AMessage, new_task_id
-from app.agents.card import CardAgent
+from app.agents.trello.card import CardAgent
 
 
 def test_add_card_member_need_info(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "app.agents.card.card_tools.get_card_details",
+        "app.agents.trello.card.card_tools.get_card_details",
         lambda cid: (200, {"id": cid, "idMembers": []}),
     )
     agent = CardAgent()
@@ -49,8 +49,8 @@ def test_add_card_member_ok(monkeypatch: pytest.MonkeyPatch) -> None:
         added.append((cid, mid))
         return 200, {}
 
-    monkeypatch.setattr("app.agents.card.card_tools.get_card_details", get_details)
-    monkeypatch.setattr("app.agents.card.card_tools.add_member", add_member)
+    monkeypatch.setattr("app.agents.trello.card.card_tools.get_card_details", get_details)
+    monkeypatch.setattr("app.agents.trello.card.card_tools.add_member", add_member)
 
     agent = CardAgent()
     msg = A2AMessage(

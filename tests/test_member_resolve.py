@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.base import A2AMessage, new_task_id
-from app.agents.member import MemberAgent
+from app.agents.trello.member import MemberAgent
 
 
 def test_resolve_member_exact(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -15,7 +15,7 @@ def test_resolve_member_exact(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
     monkeypatch.setattr(
-        "app.agents.member.board_tools.get_board_members",
+        "app.agents.trello.member.board_tools.get_board_members",
         lambda bid: (200, members),
     )
 
@@ -38,7 +38,7 @@ def test_resolve_member_levenshtein(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
     monkeypatch.setattr(
-        "app.agents.member.board_tools.get_board_members",
+        "app.agents.trello.member.board_tools.get_board_members",
         lambda bid: (200, members),
     )
 
@@ -62,7 +62,7 @@ def test_resolve_member_ambiguous(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
     monkeypatch.setattr(
-        "app.agents.member.board_tools.get_board_members",
+        "app.agents.trello.member.board_tools.get_board_members",
         lambda bid: (200, members),
     )
 

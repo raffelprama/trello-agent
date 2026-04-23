@@ -207,8 +207,8 @@ flowchart TD
 |------|------|
 | `app/agents/orchestrator.py` | **OrchestratorAgent**: `build_plan` / `resume_plan` (structured output; catalog of agents + asks only) |
 | `app/agents/bus.py` | **AgentBus**: registry + `dispatch` with `[a2a]` logging |
-| `app/agents/{member,board,list_agent,card,...}.py` | Specialists: `handle(A2AMessage) -> A2AResponse` |
-| `app/nodes/plan_executor.py` | Resolves `$step.field` refs, handles `need_info` / `clarify_user` / `error` |
+| `app/agents/trello/` | Specialists: `handle(A2AMessage) -> A2AResponse` |
+| `app/core/nodes/plan_executor.py` | Resolves `$step.field` refs, handles `need_info` / `clarify_user` / `error` |
 | `clarify` | Surfaces question; persists **`pending_plan`** into **memory** |
 | `answer_generator` | **AnswerAgent**: reply from aggregated `parsed_response` |
 | `evaluation` | Success path for normal completions |

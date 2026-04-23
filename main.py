@@ -8,8 +8,8 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from app.graph import invoke_agent
-from app.logging_setup import log_event, new_request_id, setup_logging
+from app.core.graph import invoke_agent
+from app.observability.logging_setup import log_event, new_request_id, setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)

@@ -6,9 +6,9 @@ import json
 import logging
 from typing import Any
 
-from app.llm import get_chat_model, invoke_chat_logged
+from app.core.llm import get_chat_model, invoke_chat_logged
 from app.prompt.answer import ANSWER_SYSTEM, format_answer_user
-from app.time_context import format_reference_time_for_prompt
+from app.utils.time_context import format_reference_time_for_prompt
 
 logger = logging.getLogger(__name__)
 

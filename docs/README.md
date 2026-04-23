@@ -16,8 +16,21 @@ Start here for architecture, LangGraph routing, plan execution, and operations.
 ## Quick links
 
 - Application README: [../README.md](../README.md)
-- Graph assembly: [../app/graph.py](../app/graph.py)
-- Shared state: [../app/state.py](../app/state.py)
+- Graph assembly: [../app/core/graph.py](../app/core/graph.py) (import via `app.graph` shim)
+- Shared state: [../app/core/state.py](../app/core/state.py) (import via `app.state` shim)
+
+## Package layout (`app/`)
+
+| Folder | Role |
+|--------|------|
+| `app/core/` | `config`, `state`, `llm`, `graph` |
+| `app/services/` | Trello HTTP client |
+| `app/session/` | `session_memory`, `session_prefetch` |
+| `app/governance/` | `plan_governance`, `intent_taxonomy` |
+| `app/utils/` | `resolution`, `time_context` |
+| `app/observability/` | `logging_setup`, `observability`, `cli_history` |
+| `app/agents/`, `app/agents/trello/`, `app/tools/`, `app/core/nodes/`, `app/prompt/` | Layout |
+| `app/*.py` at root | Thin shims re-exporting the above for stable imports |
 
 ## Topics intentionally not covered
 

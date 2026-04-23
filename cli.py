@@ -12,9 +12,9 @@ _pkg_root = Path(__file__).resolve().parent
 if str(_pkg_root) not in sys.path:
     sys.path.insert(0, str(_pkg_root))
 
-from app.cli_history import append_turn, clear_history, format_history_for_display, get_history_lines
-from app.logging_setup import setup_logging
-from app.session_memory import empty_memory
+from app.observability.cli_history import append_turn, clear_history, format_history_for_display, get_history_lines
+from app.observability.logging_setup import setup_logging
+from app.session.session_memory import empty_memory
 
 
 def main() -> None:
@@ -96,7 +96,7 @@ def main() -> None:
             )
             _loaded_agent = True
 
-        from app.graph import invoke_agent
+        from app.core.graph import invoke_agent
 
         out = invoke_agent(line, hist, memory=memory)
         answer = out.get("answer") or ""
