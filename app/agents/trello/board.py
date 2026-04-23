@@ -8,6 +8,7 @@ from typing import Any
 from app.agents.base import A2AMessage, A2AResponse, BaseAgent
 from app.core.config import BOARD_SCOPE_ONLY, TRELLO_BOARD_ID
 from app.utils.resolution import match_dicts_by_name
+from app.utils.trello_summaries import slim_board, slim_boards
 from app.tools import board as board_tools
 from app.tools import member as member_tools
 
@@ -18,6 +19,41 @@ def _norm(s: str) -> str:
 
 def _best_name_match(name_hint: str, boards: list[dict[str, Any]]) -> dict[str, Any] | None:
     return match_dicts_by_name(name_hint, [b for b in boards if isinstance(b, dict)])
+
+
+def _wants_board_catalog(text: str) -> bool:
+    """True when the user is asking to list/show available boards, not to pick one by name."""
+    t = _norm(text)
+    if not t:
+        return False
+    # Singular "board" after quantifiers: "all the board", "all my board", "every board"
+    if re.search(r"\b(all|every)\s+the\s+boards?\b", t):
+        return True
+    if re.search(r"\ball\s+my\s+boards?\b", t):
+        return True
+    if re.search(r"\bevery\s+board\b", t):
+        return True
+    if re.search(r"\bhow many\s+boards?\b", t):
+        return True
+    # Verb-led listing (plural boards)
+    if re.search(
+        r"\b(list|show|display|see|what|which|view|give)\b.*\bboards\b",
+        t,
+    ):
+        return True
+    # "list/show me all the board(s)", "see all the board"
+    if re.search(
+        r"\b(list|show|display|see|view)\b.*\b(all|every)\b.*\bboards?\b",
+        t,
+    ):
+        return True
+    if re.search(r"\bboards\b.*\b(available|accessible|there|have)\b", t):
+        return True
+    if re.search(r"\bboard\b.*\bavailable\b", t):
+        return True
+    if re.search(r"\b(available|accessible)\b.*\bboards?\b", t):
+        return True
+    return False
 
 
 class BoardAgent(BaseAgent):
@@ -57,7 +93,8 @@ class BoardAgent(BaseAgent):
             st, b = board_tools.get_board(str(board_id))
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
-            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"board": b, "board_id": b.get("id")})
+            sb = slim_board(b) or {}
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"board": sb, "board_id": b.get("id")})
 
         if ask == "get_board_lists":
             cards = str(ins.get("cards") or "none")
@@ -132,7 +169,8 @@ class BoardAgent(BaseAgent):
             st, b = board_tools.create_board(str(name), desc=ins.get("desc"))
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
-            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"board": b, "board_id": b.get("id")})
+            sb = slim_board(b) or {}
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"board": sb, "board_id": b.get("id")})
 
         if ask == "update_board":
             if not board_id:
@@ -141,7 +179,8 @@ class BoardAgent(BaseAgent):
             st, b = board_tools.update_board(str(board_id), **fields)
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
-            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"board": b, "board_id": b.get("id")})
+            sb = slim_board(b) or {}
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"board": sb, "board_id": b.get("id")})
 
         if ask == "get_board_custom_fields":
             params = {k: v for k, v in ins.items() if k in ("fields",)}
@@ -193,13 +232,14 @@ class BoardAgent(BaseAgent):
             st, b = board_tools.get_board(TRELLO_BOARD_ID)
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st} loading default board")
+            sb = slim_board(b) or {}
             return A2AResponse(
                 task_id=msg.task_id,
                 frm=self.name,
                 status="ok",
                 data={
                     "board_id": b.get("id"),
-                    "board": b,
+                    "board": sb,
                     "resolved_board_name": b.get("name"),
                 },
             )
@@ -210,13 +250,14 @@ class BoardAgent(BaseAgent):
         if bid_in and not hint_clean:
             st_b, b_direct = board_tools.get_board(str(bid_in))
             if st_b < 400 and isinstance(b_direct, dict):
+                sb = slim_board(b_direct) or {}
                 return A2AResponse(
                     task_id=msg.task_id,
                     frm=self.name,
                     status="ok",
                     data={
                         "board_id": b_direct.get("id"),
-                        "board": b_direct,
+                        "board": sb,
                         "resolved_board_name": b_direct.get("name"),
                     },
                 )
@@ -224,32 +265,52 @@ class BoardAgent(BaseAgent):
         if mem.get("board_id") and not hint_clean:
             st, b = board_tools.get_board(str(mem["board_id"]))
             if st < 400 and isinstance(b, dict):
+                sb = slim_board(b) or {}
                 return A2AResponse(
                     task_id=msg.task_id,
                     frm=self.name,
                     status="ok",
-                    data={"board_id": b.get("id"), "board": b, "resolved_board_name": b.get("name")},
+                    data={"board_id": b.get("id"), "board": sb, "resolved_board_name": b.get("name")},
                 )
 
         st, boards = member_tools.get_my_boards()
         if st >= 400:
             return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st} listing boards")
 
-        # Prefer hint from inputs; else try extract quoted name from user_text
+        # List / "what's available" questions — return all boards, not a disambiguation prompt.
+        if _wants_board_catalog(uid_text) or _wants_board_catalog(hint_clean):
+            summary = slim_boards([b for b in boards if isinstance(b, dict)])
+            return A2AResponse(
+                task_id=msg.task_id,
+                frm=self.name,
+                status="ok",
+                data={"boards": summary, "board_count": len(summary)},
+            )
+
+        # Prefer hint from inputs; else extract a board name from user_text (avoid greedy "board …" matches).
         name_guess = hint_clean if hint_clean else ""
         if not name_guess and uid_text:
-            m = re.search(r"board\s+[\"']?([^\"'\n]+)[\"']?", uid_text, re.I)
+            m = re.search(r"board\s+[\"']([^\"'\n]+)[\"']", uid_text, re.I)
             if m:
                 name_guess = m.group(1).strip()
+            else:
+                m2 = re.search(
+                    r"\b(?:on\s+)?(?:the\s+)?board\s+(?:called|named)\s+[\"']?([^\"'\n,?.!]+)",
+                    uid_text,
+                    re.I,
+                )
+                if m2:
+                    name_guess = m2.group(1).strip()
 
         if not name_guess:
             if len(boards) == 1:
                 b = boards[0]
+                sb = slim_board(b) if isinstance(b, dict) else {}
                 return A2AResponse(
                     task_id=msg.task_id,
                     frm=self.name,
                     status="ok",
-                    data={"board_id": b.get("id"), "board": b, "resolved_board_name": b.get("name")},
+                    data={"board_id": b.get("id"), "board": sb, "resolved_board_name": b.get("name")},
                 )
             cand = [{"id": b.get("id"), "name": b.get("name")} for b in boards[:30] if isinstance(b, dict)]
             return A2AResponse(
@@ -262,13 +323,14 @@ class BoardAgent(BaseAgent):
 
         match = _best_name_match(name_guess, [b for b in boards if isinstance(b, dict)])
         if match:
+            sm = slim_board(match) or {}
             return A2AResponse(
                 task_id=msg.task_id,
                 frm=self.name,
                 status="ok",
                 data={
                     "board_id": match.get("id"),
-                    "board": match,
+                    "board": sm,
                     "resolved_board_name": match.get("name"),
                 },
             )

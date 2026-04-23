@@ -15,6 +15,32 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
+def _card_name_matches_hint(name_hint: str, card_name: str) -> bool:
+    """
+    Match card title to user hint without substring hits inside unrelated words
+    (e.g. hint 'Ai' must not match 'TEST_AGAIN' via the 'ai' inside 'again').
+    """
+    nh = _norm(name_hint)
+    cn = _norm(card_name)
+    if not nh:
+        return False
+    if not cn:
+        return False
+    if cn == nh:
+        return True
+    if len(nh) < 2:
+        return False
+    if cn.startswith(nh):
+        return True
+    try:
+        pat = r"(?i)(?<![a-z0-9])" + re.escape(nh) + r"(?![a-z0-9])"
+        if re.search(pat, cn):
+            return True
+    except re.error:
+        pass
+    return False
+
+
 def _match_cards(name_hint: str, lists_payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
     nh = _norm(name_hint)
     if not nh:
@@ -28,7 +54,7 @@ def _match_cards(name_hint: str, lists_payload: list[dict[str, Any]]) -> list[di
             if not isinstance(c, dict):
                 continue
             cn = str(c.get("name") or "")
-            if _norm(cn) == nh or nh in _norm(cn):
+            if _card_name_matches_hint(name_hint, cn):
                 matches.append(
                     {
                         "id": c.get("id"),
@@ -328,7 +354,7 @@ class CardAgent(BaseAgent):
             narrowed = [
                 x
                 for x in lc
-                if isinstance(x, dict) and hint and (_norm(str(x.get("name", ""))) == _norm(hint) or _norm(hint) in _norm(str(x.get("name", ""))))
+                if isinstance(x, dict) and hint and _card_name_matches_hint(str(hint), str(x.get("name", "")))
             ]
             if len(narrowed) == 1:
                 x = narrowed[0]

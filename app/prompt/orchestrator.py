@@ -9,7 +9,7 @@ from typing import Any
 ORCHESTRATOR_CATALOG = """
 Allowed agents and asks (inputs must be short hints or $step_id.field references only).
 PRD v3 intent hints (for final_intent naming): QUERY_BOARDS, QUERY_SEARCH, QUERY_NOTIFICATIONS, QUERY_CUSTOM_FIELDS,
-CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_CREATE, etc.
+CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_SET_DUE_COMPLETE, CARD_CREATE, etc.
 
 - member: get_me | get_my_boards | get_member_cards | get_my_notifications | get_my_organizations | update_me | resolve_member
 - board: resolve_board | get_board | get_board_lists | get_board_cards | get_board_labels | get_board_members | get_board_actions | create_board | update_board | delete_board | get_board_custom_fields | add_board_member | remove_board_member | get_board_memberships
@@ -31,9 +31,12 @@ Typical flows:
 - "move card A to list B": resolve_board -> resolve_card(card_hint) -> resolve_list(list_hint) -> move_card(card_id, target_list_id from $list step)
 - "add card Title in List L": resolve_board -> resolve_list -> create_card(list_id, card_name)
 - "find cards about onboarding": search (query in inputs_json)
+- "list/show my boards", "all the board(s)", "see all boards", "saya mau liat semua board", or any phrasing (in any language) that asks to list/enumerate/show all boards the user has access to: **always use member get_my_boards** — never use board.resolve_board for this intent
 - "show notifications": member get_my_notifications OR notification list_notifications
 - "set custom field Priority on card X": resolve_board -> resolve_card -> custom_field get_board_custom_fields -> set_card_custom_field_value
-- "mark [card] as done": resolve_board -> resolve_card -> card set_card_due_complete(dueComplete=true)
+- "move [card] to Done" / "put [card] in the Done list" / "move to Done column" → CARD_MOVE: resolve_board -> resolve_card -> resolve_list(list_hint Done) -> move_card (does NOT set dueComplete)
+- "mark [card] as done" / "mark complete" / "set due complete" / "[card] is finished" → CARD_SET_DUE_COMPLETE: resolve_board -> resolve_card -> card set_card_due_complete(dueComplete=true) (Trello due badge; does NOT move the card or checklist items)
+- If the user is vague ("set [card] to done", "[card] is done") and session memory shows a list named "Done" on the board, the analyzer must ask for clarification before planning — do not guess move vs mark-complete in the planner alone
 - "add checklist [name] to [card]": resolve_board -> resolve_card -> checklist create_checklist(name)
 - "add item [X] to [checklist] on [card]": resolve_board -> resolve_card -> resolve_checklist -> create_checkitem
 - "check off [item] on [card]": resolve_board -> resolve_card -> resolve_check_item (by card_id+item_name) -> set_checkitem_state
@@ -60,7 +63,17 @@ Produce structured output with:
 - analysis: short paragraph — ambiguities, implicit references (e.g. "this card"), constraints, missing info.
 - reasoning: ordered high-level steps the assistant should take in natural language only (NOT agent.ask names, NOT JSON).
 - required_entities: list of entity types to resolve (e.g. board, list, card, member, label) — use lowercase tokens.
-- suggested_final_intent: a short hint label only (e.g. CARD_MOVE, QUERY_BOARDS, CARD_CREATE) — the planner may override.
+- suggested_final_intent: a short hint label only (e.g. CARD_MOVE, CARD_SET_DUE_COMPLETE, QUERY_BOARDS) — the planner may override.
+- needs_intent_clarification: boolean — true ONLY when "done" is ambiguous between (A) moving the card to a list named Done and (B) marking the card's due as complete (dueComplete), per the rules below.
+- clarification_question: string — if needs_intent_clarification is true, one short question for the user (e.g. "Move this card to the Done list, or mark the due date as complete (checkmark)?"); otherwise "".
+
+Done vs complete (not checklist items; card-level dueComplete only):
+- **CRITICAL — not ambiguous:** If the user uses **mark** together with **done** or **complete** anywhere (e.g. "mark Ai2 done", "set the Ai2 to mark done", "mark the complete", typos like "set the mark the complete"), OR **set** … **to** **done** without naming the Done **list/column** (e.g. "set the card Ai to done"), that always means **dueComplete / checkmark** → suggested_final_intent CARD_SET_DUE_COMPLETE; **needs_intent_clarification MUST be false**. Do not ask move-vs-mark for those.
+- If the user clearly means a list/column only: "move to Done", "put in Done list", "Done column" (without mark+complete phrasing above) → CARD_MOVE; needs_intent_clarification=false.
+- If they clearly mean completion without moving: "set due complete", "finished", "mark as done" → CARD_SET_DUE_COMPLETE; needs_intent_clarification=false.
+- **Ambiguous (clarify only here):** They use "done" or "complete" **without** "mark", **without** "set … to done", and **without** "move"/"list"/"column" phrasing, AND session memory's "lists on board:" includes **Done**, e.g. "set X done" (no **to** before **done**) or "X is done" only → needs_intent_clarification=true.
+- If there is no Done list in session memory, prefer CARD_SET_DUE_COMPLETE for vague "done" phrasing; needs_intent_clarification=false.
+- If **pending_clarification** in session memory is about move-vs-mark and the user replies with mark/complete/due/checkmark wording, set CARD_SET_DUE_COMPLETE and needs_intent_clarification=false.
 
 The session memory block begins with a reference time (UTC, optional local). Use it when the user says "tomorrow", "today", "overdue", or relative deadlines — reflect that in analysis and reasoning.
 """
@@ -79,6 +92,7 @@ User message:
 {user_text}
 
 {analysis_block}Rules:
+- CARD_SET_DUE_COMPLETE vs CARD_MOVE: if the user wants the due checkmark (dueComplete), use card set_card_due_complete — never move_card to Done unless they asked to move to the Done list/column.
 - Start with board.resolve_board when any board-scoped action is needed unless memory already has board_id and the user did not name a different board.
 - Use depends_on so list/card steps run after board resolution when they need board_id from a prior step.
 - For move_card: inputs should reference card_id and target_list_id from resolve steps, e.g. "$s2.card_id" and "$s3.list_id".

@@ -17,6 +17,7 @@ KNOWN_INTENTS: frozenset[str] = frozenset(
         "CARD_CREATE",
         "CARD_UPDATE",
         "CARD_MOVE",
+        "CARD_SET_DUE_COMPLETE",
         "CARD_ARCHIVE",
         "CARD_DELETE",
         "LIST_CREATE",

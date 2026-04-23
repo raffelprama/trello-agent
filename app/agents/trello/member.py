@@ -6,6 +6,7 @@ from typing import Any
 
 from app.agents.base import A2AMessage, A2AResponse, BaseAgent
 from app.utils.resolution import best_match_by_name, levenshtein, match_dicts_by_name
+from app.utils.trello_summaries import slim_boards
 from app.tools import board as board_tools
 from app.tools import member as member_tools
 
@@ -101,7 +102,8 @@ class MemberAgent(BaseAgent):
             st, boards = member_tools.get_my_boards()
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
-            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"boards": boards})
+            # Full /members/me/boards payloads are huge; answer agent only needs id/name/closed/url.
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"boards": slim_boards(boards)})
 
         if ask == "get_my_notifications":
             params = {k: v for k, v in ctx.get("_resolved_inputs", {}).items() if k in ("filter", "read_filter", "limit", "page")}

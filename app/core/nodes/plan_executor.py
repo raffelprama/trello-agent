@@ -12,6 +12,7 @@ from app.governance.intent_taxonomy import normalize_intent_label
 from app.governance.plan_governance import effective_confirm_mutations, effective_dry_run, is_destructive, is_mutating
 from app.core.state import ChatState
 from app.services.trello_client import get_client
+from app.utils.trello_summaries import slim_result_for_answer
 
 logger = logging.getLogger(__name__)
 
@@ -149,31 +150,34 @@ def _aggregate_parsed(plan: Plan, results: dict[str, dict[str, Any]]) -> dict[st
     for sid, data in results.items():
         if sid.startswith("_auto_"):
             continue
-        out["step_summaries"][sid] = {k: data[k] for k in list(data.keys())[:24]}
-        if "queried_board" in data:
-            out["queried_board"] = data["queried_board"]
-        if "cards" in data:
-            out["cards"] = data["cards"]
-        if "card" in data:
-            out["card"] = data["card"]
-        if "lists" in data:
-            out["lists"] = data["lists"]
-        if "labels" in data:
-            out["labels"] = data["labels"]
-        if "member" in data:
-            out["member"] = data["member"]
-        if "boards" in data:
-            out["boards"] = data["boards"]
-        if "checklists" in data:
-            out["checklists"] = data["checklists"]
-        if "comments" in data:
-            out["comments"] = data["comments"]
-        if "custom_fields" in data:
-            out["custom_fields"] = data["custom_fields"]
-        if "webhooks" in data:
-            out["webhooks"] = data["webhooks"]
-        if isinstance(data.get("board"), dict):
-            b = data["board"]
+        if not isinstance(data, dict):
+            continue
+        slim = slim_result_for_answer(data)
+        out["step_summaries"][sid] = {k: slim[k] for k in list(slim.keys())[:24]}
+        if "queried_board" in slim:
+            out["queried_board"] = slim["queried_board"]
+        if "cards" in slim:
+            out["cards"] = slim["cards"]
+        if "card" in slim:
+            out["card"] = slim["card"]
+        if "lists" in slim:
+            out["lists"] = slim["lists"]
+        if "labels" in slim:
+            out["labels"] = slim["labels"]
+        if "member" in slim:
+            out["member"] = slim["member"]
+        if "boards" in slim:
+            out["boards"] = slim["boards"]
+        if "checklists" in slim:
+            out["checklists"] = slim["checklists"]
+        if "comments" in slim:
+            out["comments"] = slim["comments"]
+        if "custom_fields" in slim:
+            out["custom_fields"] = slim["custom_fields"]
+        if "webhooks" in slim:
+            out["webhooks"] = slim["webhooks"]
+        if isinstance(slim.get("board"), dict):
+            b = slim["board"]
             out["queried_board"] = {"id": b.get("id"), "name": b.get("name")}
     return out
 

@@ -11,8 +11,21 @@ from app.core.config import SESSION_PREFETCH
 from app.governance.plan_governance import user_confirms_destructive
 from app.session.session_prefetch import run_prefetch
 from app.core.state import ChatState
+from app.utils.done_intent import apply_done_intent_heuristic
 
 logger = logging.getLogger(__name__)
+
+
+def _intent_clarify_response(mem: dict[str, Any], question: str) -> dict[str, Any]:
+    return {
+        "plan": {},
+        "skip_tools": True,
+        "error_message": "",
+        "needs_clarification": True,
+        "clarification_question": question.strip(),
+        "ambiguous_entities": {"kind": "intent_ambiguity"},
+        "memory": mem,
+    }
 
 
 def orchestrator_node(state: ChatState) -> dict[str, Any]:
@@ -38,8 +51,11 @@ def orchestrator_node(state: ChatState) -> dict[str, Any]:
                 }
         mem_abandon = {**mem, "pending_plan": None}
         orch = OrchestratorAgent()
+        analysis_d = apply_done_intent_heuristic(orch.analyze(q, mem_abandon), q)
+        if analysis_d.needs_intent_clarification and (analysis_d.clarification_question or "").strip():
+            return _intent_clarify_response(mem_abandon, analysis_d.clarification_question)
         try:
-            plan = orch.build_plan(q, mem_abandon)
+            plan = orch.build_plan(q, mem_abandon, analysis=analysis_d)
         except Exception as e:
             logger.exception("[orchestrator] failed after destructive cancel")
             return {
@@ -61,7 +77,10 @@ def orchestrator_node(state: ChatState) -> dict[str, Any]:
         if pending and isinstance(pending, dict) and pending.get("plan") and not pending.get("awaiting_destructive_confirm"):
             plan = orch.resume_plan(q, pending, mem)
         else:
-            plan = orch.build_plan(q, mem)
+            analysis = apply_done_intent_heuristic(orch.analyze(q, mem), q)
+            if analysis.needs_intent_clarification and (analysis.clarification_question or "").strip():
+                return _intent_clarify_response(mem, analysis.clarification_question)
+            plan = orch.build_plan(q, mem, analysis=analysis)
     except Exception as e:
         logger.exception("[orchestrator] failed")
         return {

@@ -62,3 +62,61 @@ def test_resolve_board_hint_still_wins_over_stale_board_id(monkeypatch: pytest.M
     r = agent.handle(msg)
     assert r.status == "ok"
     assert r.data.get("board_id") == "correct"
+
+
+def test_resolve_board_list_intent_returns_boards_not_clarify(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phrases like 'what boards are available' must not treat 'that available' as a board name."""
+    boards = [
+        {"id": "a", "name": "AXA Agency", "closed": True, "shortUrl": "https://trello.com/b/a"},
+        {"id": "b", "name": "HRGA", "closed": False, "shortUrl": "https://trello.com/b/b"},
+    ]
+    monkeypatch.setattr("app.agents.trello.board.member_tools.get_my_boards", lambda: (200, boards))
+    monkeypatch.setattr("app.agents.trello.board.BOARD_SCOPE_ONLY", False)
+    monkeypatch.setattr("app.agents.trello.board.TRELLO_BOARD_ID", "")
+
+    agent = BoardAgent()
+    msg = A2AMessage(
+        task_id=new_task_id(),
+        frm="test",
+        to="board",
+        ask="resolve_board",
+        context={
+            "_resolved_inputs": {},
+            "memory": {},
+            "user_text": "what are board that available",
+        },
+    )
+    r = agent.handle(msg)
+    assert r.status == "ok"
+    assert r.data.get("board_count") == 2
+    names = [x.get("name") for x in (r.data.get("boards") or [])]
+    assert "HRGA" in names and "AXA Agency" in names
+
+
+@pytest.mark.parametrize(
+    "user_phrase",
+    [
+        "i want to see all the board",
+        "list me all the board",
+        "show me all the boards",
+    ],
+)
+def test_resolve_board_catalog_singular_board_phrasing(
+    monkeypatch: pytest.MonkeyPatch, user_phrase: str
+) -> None:
+    boards = [{"id": "b1", "name": "Alpha", "closed": False, "shortUrl": "https://x/1"}]
+    monkeypatch.setattr("app.agents.trello.board.member_tools.get_my_boards", lambda: (200, boards))
+    monkeypatch.setattr("app.agents.trello.board.BOARD_SCOPE_ONLY", False)
+    monkeypatch.setattr("app.agents.trello.board.TRELLO_BOARD_ID", "")
+
+    agent = BoardAgent()
+    msg = A2AMessage(
+        task_id=new_task_id(),
+        frm="test",
+        to="board",
+        ask="resolve_board",
+        context={"_resolved_inputs": {}, "memory": {}, "user_text": user_phrase},
+    )
+    r = agent.handle(msg)
+    assert r.status == "ok"
+    assert (r.data.get("boards") or [{}])[0].get("name") == "Alpha"

@@ -85,6 +85,14 @@ class _Analysis(BaseModel):
         default="",
         description="Short hint label e.g. CARD_MOVE, QUERY_BOARDS; planner may override.",
     )
+    needs_intent_clarification: bool = Field(
+        default=False,
+        description="True if intent is ambiguous and the user must answer before building a plan.",
+    )
+    clarification_question: str = Field(
+        default="",
+        description="If needs_intent_clarification, the exact question to show the user.",
+    )
 
 
 class _ResumePlan(BaseModel):
@@ -116,18 +124,25 @@ class OrchestratorAgent:
             )
             out = raw if isinstance(raw, _Analysis) else _Analysis.model_validate(raw)
             logger.info(
-                "[plan] analyze intent=%s required=%s",
+                "[plan] analyze intent=%s required=%s intent_clarify=%s",
                 out.suggested_final_intent,
                 out.required_entities,
+                out.needs_intent_clarification,
             )
             return out
         except Exception:
             logger.warning("[plan] analyze failed; continuing without analyzer output", exc_info=True)
             return _Analysis()
 
-    def build_plan(self, user_text: str, memory: dict[str, Any] | None) -> Plan:
+    def build_plan(
+        self,
+        user_text: str,
+        memory: dict[str, Any] | None,
+        analysis: _Analysis | None = None,
+    ) -> Plan:
         mem = memory or {}
-        analysis = self.analyze(user_text, mem)
+        if analysis is None:
+            analysis = self.analyze(user_text, mem)
         analysis_dict = analysis.model_dump()
         meta_base: dict[str, Any] = {"user_text": user_text, "analysis": analysis_dict}
 
@@ -214,7 +229,7 @@ class OrchestratorAgent:
         out = raw if isinstance(raw, _ResumePlan) else _ResumePlan.model_validate(raw)
         if out.abandon_pending or not out.is_continuation:
             logger.info("[plan] resume abandoned — building fresh plan")
-            return self.build_plan(user_text, mem)
+            return self.build_plan(user_text, mem, analysis=None)
 
         tid = out.target_step_id or (cur.step_id if cur else "")
         patch = _parse_inputs_json(out.patch_inputs_json)

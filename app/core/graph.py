@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 _compiled_graph: Any = None
 
 
-def route_after_orchestrator(state: ChatState) -> Literal["plan_executor", "reflection"]:
+def route_after_orchestrator(state: ChatState) -> Literal["plan_executor", "reflection", "clarify"]:
+    if state.get("needs_clarification"):
+        return "clarify"
     if state.get("skip_tools"):
         return "reflection"
     return "plan_executor"
@@ -79,7 +81,7 @@ def _build_graph():
     g.add_conditional_edges(
         "orchestrator",
         route_after_orchestrator,
-        {"plan_executor": "plan_executor", "reflection": "reflection"},
+        {"plan_executor": "plan_executor", "reflection": "reflection", "clarify": "clarify"},
     )
     g.add_conditional_edges(
         "plan_executor",
