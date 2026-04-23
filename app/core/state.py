@@ -50,4 +50,5 @@ class ChatState(TypedDict, total=False):
 
     # Internal routing / timing
     skip_tools: bool
+    task_type: str  # "simple" | "bulk" — set by router_node
     _latency_ms: float

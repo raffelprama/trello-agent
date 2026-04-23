@@ -49,7 +49,10 @@ class ListAgent(BaseAgent):
                 )
                 br = self.bus.dispatch(sub)
                 if br.status != "ok":
-                    return A2AResponse(task_id=msg.task_id, frm=self.name, status=br.status, data=br.data, missing=br.missing, clarification=br.clarification, error=br.error)
+                    # Surface as need_info so plan_executor auto-inserts a resolve_board step.
+                    # Propagating clarify_user here causes resume_plan to patch list_hint with
+                    # the board name, breaking the clarification loop.
+                    return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["board_id"])
                 board_id = br.data.get("board_id")
                 ins = {**ins, "board_id": board_id}
             else:

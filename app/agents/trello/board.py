@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.agents.base import A2AMessage, A2AResponse, BaseAgent
@@ -76,6 +77,7 @@ class BoardAgent(BaseAgent):
             "get_board_actions",
             "get_board_cards",
             "get_board_custom_fields",
+            "get_board_summary",
             "delete_board",
             "add_board_member",
             "remove_board_member",
@@ -196,6 +198,10 @@ class BoardAgent(BaseAgent):
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
             return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"memberships": mships, "board_id": board_id})
 
+        if ask == "get_board_summary":
+            board_name = mem.get("board_name") or ins.get("board_name") or str(board_id)
+            return self._get_board_summary(msg, board_id, board_name)
+
         if ask == "add_board_member":
             mid = ins.get("member_id") or ins.get("idMember")
             if not mid:
@@ -222,6 +228,143 @@ class BoardAgent(BaseAgent):
             return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"deleted": True, "board_id": board_id})
 
         return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"Unknown ask={ask!r}")
+
+    def _get_board_summary(self, msg: A2AMessage, board_id: Any, board_name: str) -> A2AResponse:
+        bid = str(board_id)
+
+        st_l, lists = board_tools.get_board_lists(bid)
+        if st_l >= 400:
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st_l} fetching lists")
+        list_map: dict[str, str] = {lst["id"]: lst.get("name", "") for lst in lists if isinstance(lst, dict) and lst.get("id")}
+
+        st_m, members = board_tools.get_board_members(bid)
+        if st_m >= 400:
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st_m} fetching members")
+        member_map: dict[str, str] = {
+            m["id"]: m.get("fullName") or m.get("username") or m["id"]
+            for m in members if isinstance(m, dict) and m.get("id")
+        }
+
+        st_c, raw_cards = board_tools.get_board_cards(bid)
+        if st_c >= 400:
+            return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st_c} fetching cards")
+
+        now_utc = datetime.now(timezone.utc)
+        soon = now_utc + timedelta(days=7)
+        very_soon = now_utc + timedelta(days=3)
+
+        def _parse_due(due_str: str | None) -> datetime | None:
+            if not due_str:
+                return None
+            try:
+                return datetime.fromisoformat(due_str.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+
+        cards = [c for c in raw_cards if isinstance(c, dict)]
+        total = len(cards)
+
+        completed: list[dict] = []
+        incomplete: list[dict] = []
+        overdue: list[dict] = []
+        upcoming_7: list[dict] = []
+        upcoming_3: list[dict] = []
+
+        by_list: dict[str, dict] = {}
+        by_member: dict[str, dict] = {}
+
+        for c in cards:
+            done = bool(c.get("dueComplete"))
+            due_dt = _parse_due(c.get("due"))
+            list_id = c.get("idList") or ""
+            list_name = list_map.get(list_id, "Unknown")
+            card_ids = c.get("idMembers") or []
+
+            slim = {"name": c.get("name"), "due": c.get("due"), "list_name": list_name}
+
+            if done:
+                completed.append(slim)
+            else:
+                incomplete.append(slim)
+                if due_dt and due_dt < now_utc:
+                    overdue.append(slim)
+                elif due_dt and due_dt <= soon:
+                    upcoming_7.append(slim)
+                    if due_dt <= very_soon:
+                        upcoming_3.append(slim)
+
+            # Per-list
+            if list_name not in by_list:
+                by_list[list_name] = {"list_name": list_name, "total": 0, "completed": 0, "incomplete": 0}
+            by_list[list_name]["total"] += 1
+            if done:
+                by_list[list_name]["completed"] += 1
+            else:
+                by_list[list_name]["incomplete"] += 1
+
+            # Per-member
+            if not card_ids:
+                mn = "Unassigned"
+                if mn not in by_member:
+                    by_member[mn] = {"member": mn, "total": 0, "completed": 0, "incomplete": 0, "overdue": 0}
+                by_member[mn]["total"] += 1
+                by_member[mn]["completed" if done else "incomplete"] += 1
+                if not done and due_dt and due_dt < now_utc:
+                    by_member[mn]["overdue"] += 1
+            else:
+                for mid in card_ids:
+                    mn = member_map.get(mid, mid)
+                    if mn not in by_member:
+                        by_member[mn] = {"member": mn, "total": 0, "completed": 0, "incomplete": 0, "overdue": 0}
+                    by_member[mn]["total"] += 1
+                    by_member[mn]["completed" if done else "incomplete"] += 1
+                    if not done and due_dt and due_dt < now_utc:
+                        by_member[mn]["overdue"] += 1
+
+        completion_pct = round(len(completed) / total * 100, 1) if total else 0.0
+        incomplete_count = len(incomplete)
+        unassigned_incomplete = by_member.get("Unassigned", {}).get("incomplete", 0)
+
+        # Recommendations
+        recs: list[str] = []
+        if overdue:
+            recs.append(f"{len(overdue)} card(s) are overdue — address these immediately.")
+        if upcoming_3:
+            recs.append(f"{len(upcoming_3)} card(s) are due within the next 3 days.")
+        if completion_pct < 30 and total >= 5:
+            recs.append(f"Only {completion_pct}% of cards are completed — consider reviewing scope or re-prioritizing.")
+        if incomplete_count > 0 and unassigned_incomplete / incomplete_count > 0.3:
+            recs.append(f"{unassigned_incomplete} incomplete card(s) have no member assigned.")
+        if by_member:
+            heaviest = max(
+                ((m, d) for m, d in by_member.items() if m != "Unassigned"),
+                key=lambda x: x[1]["incomplete"],
+                default=(None, None),
+            )
+            if heaviest[0] and incomplete_count > 0 and heaviest[1]["incomplete"] / incomplete_count > 0.5:
+                recs.append(
+                    f"{heaviest[0]} holds {heaviest[1]['incomplete']} of {incomplete_count} incomplete cards — consider rebalancing."
+                )
+
+        summary = {
+            "board_name": board_name,
+            "total_cards": total,
+            "completed_count": len(completed),
+            "incomplete_count": incomplete_count,
+            "completion_pct": completion_pct,
+            "overdue_count": len(overdue),
+            "overdue": overdue[:10],
+            "upcoming_due_7_days": upcoming_7[:10],
+            "by_list": sorted(by_list.values(), key=lambda x: x["total"], reverse=True),
+            "by_member": sorted(by_member.values(), key=lambda x: x["total"], reverse=True),
+            "recommendations": recs,
+        }
+        return A2AResponse(
+            task_id=msg.task_id,
+            frm=self.name,
+            status="ok",
+            data={"board_summary": summary, "board_id": board_id, "resolved_board_name": board_name},
+        )
 
     def _resolve_board(self, msg: A2AMessage, ins: dict[str, Any], mem: dict[str, Any]) -> A2AResponse:
         hint = ins.get("board_hint") or ins.get("name") or ""

@@ -48,6 +48,10 @@ MUTATING_STEPS: frozenset[tuple[str, str]] = frozenset(
         ("attachment", "add_url_attachment"),
         ("attachment", "delete_attachment"),
         ("member", "update_me"),
+        ("batch", "mark_list_cards_complete"),
+        ("batch", "archive_list_cards"),
+        ("batch", "create_cards"),
+        ("_foreach", "apply"),
     }
 )
 
@@ -66,6 +70,7 @@ DESTRUCTIVE_STEPS: frozenset[tuple[str, str]] = frozenset(
         ("card", "remove_card_member"),
         ("list", "archive_list"),
         ("list", "set_list_closed"),
+        ("batch", "archive_list_cards"),
     }
 )
 

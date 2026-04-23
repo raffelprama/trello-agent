@@ -119,7 +119,10 @@ class CardAgent(BaseAgent):
                 )
                 lr = self.bus.dispatch(sub)
                 if lr.status != "ok":
-                    return A2AResponse(task_id=msg.task_id, frm=self.name, status=lr.status, data=lr.data, missing=lr.missing, clarification=lr.clarification, error=lr.error)
+                    # Surface as need_info so plan_executor auto-inserts a resolve_list step.
+                    # Propagating clarify_user here causes resume_plan to patch card_hint with
+                    # the list name, breaking the clarification loop.
+                    return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["list_id"])
                 list_id = lr.data.get("list_id")
                 ins = {**ins, "list_id": list_id}
             if not name:

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from app.core.graph import invoke_agent
-from app.observability.logging_setup import log_event, new_request_id, setup_logging
+from app.observability.logging_setup import log_event, setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -50,8 +50,8 @@ async def health() -> dict[str, str]:
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     rid = req.id or uuid4()
-    log_id = new_request_id()
-    log_event(logger, log_id, "chat_start", request_id=str(rid), question_len=len(req.question))
+    rid_s = str(rid)
+    log_event(logger, rid_s, "chat_start", question_len=len(req.question))
 
     out = invoke_agent(req.question, req.history, memory=req.memory)
 
@@ -70,7 +70,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         "plan_status": last_step.get("status") if isinstance(last_step, dict) else None,
         "plan_trace": pt,
     }
-    log_event(logger, log_id, "chat_end", request_id=str(rid), intent=intent, evaluation=ev.get("status"))
+    log_event(logger, rid_s, "chat_end", intent=intent, evaluation=ev.get("status"))
 
     return ChatResponse(
         id=rid,

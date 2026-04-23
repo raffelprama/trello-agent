@@ -9,10 +9,10 @@ from typing import Any
 ORCHESTRATOR_CATALOG = """
 Allowed agents and asks (inputs must be short hints or $step_id.field references only).
 PRD v3 intent hints (for final_intent naming): QUERY_BOARDS, QUERY_SEARCH, QUERY_NOTIFICATIONS, QUERY_CUSTOM_FIELDS,
-CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_SET_DUE_COMPLETE, CARD_CREATE, etc.
+CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_SET_DUE_COMPLETE, CARD_CREATE, SUMMARIZE_BOARD, etc.
 
 - member: get_me | get_my_boards | get_member_cards | get_my_notifications | get_my_organizations | update_me | resolve_member
-- board: resolve_board | get_board | get_board_lists | get_board_cards | get_board_labels | get_board_members | get_board_actions | create_board | update_board | delete_board | get_board_custom_fields | add_board_member | remove_board_member | get_board_memberships
+- board: resolve_board | get_board | get_board_lists | get_board_cards | get_board_labels | get_board_members | get_board_actions | create_board | update_board | delete_board | get_board_custom_fields | add_board_member | remove_board_member | get_board_memberships | get_board_summary
 - list: resolve_list | get_list_cards | create_list | update_list | archive_list | set_list_closed | set_list_pos
 - card: resolve_card | get_card_details | create_card | update_card | move_card | delete_card | set_card_closed | remove_card_member | add_card_member | set_card_due | set_card_due_complete | get_card_custom_field_items | set_card_custom_field_item
 - checklist: list_checklists | resolve_checklist | resolve_check_item | set_checkitem_state | create_checkitem | create_checklist | delete_checkitem
@@ -24,6 +24,11 @@ CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_SET_DUE_COMPLETE, CARD_CREATE,
 - search: search | search_members
 - notification: list_notifications | mark_all_notifications_read | update_notification
 - attachment: list_attachments | add_url_attachment | delete_attachment
+- batch: mark_list_cards_complete | archive_list_cards | create_cards
+  (handles iteration internally — preferred for bulk ops on an entire list)
+  create_cards inputs: list_id, names (JSON array of card name strings, e.g. ["task1","task2"])
+- _foreach: apply — iterate a prior step's collection; dispatch one agent action per item
+  inputs_json: {"source":"$sX.cards","item_id_field":"id","key_as":"card_id","agent":"card","ask":"<ask>","extra_inputs":{<literal fields>},"limit":<optional int — first N items only>}
 
 Reference outputs from prior steps using "$STEP_ID.field" (e.g. "$s1.board_id", "$s2.list_id", "$s3.card_id").
 Typical flows:
@@ -42,6 +47,7 @@ Typical flows:
 - "check off [item] on [card]": resolve_board -> resolve_card -> resolve_check_item (by card_id+item_name) -> set_checkitem_state
 - "add label [name] to [card]": resolve_board -> resolve_card -> resolve_label -> add_label_to_card
 - "assign [person] to [card]": resolve_board -> resolve_card -> member resolve_member -> card add_card_member
+- "summarize the board" / "board status" / "how is the board doing" / "progress report" / "I want to summarize": resolve_board -> board get_board_summary (returns completion %, per-member stats, due-date breakdown, recommendations)
 Do NOT put full user sentences into card_hint — use a short token from the user request (card title, list name, board name).
 """
 

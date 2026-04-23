@@ -83,6 +83,7 @@ def _preview_dict(d: Any, max_len: int = 400) -> str:
 def create_default_bus(factory: Callable[[], dict[str, BaseAgent]] | None = None) -> AgentBus:
     """Build bus with Trello specialists only (orchestrator/answer/reflection are separate)."""
     from app.agents.trello.attachment_agent import AttachmentAgent
+    from app.agents.trello.batch import BatchAgent
     from app.agents.trello.board import BoardAgent
     from app.agents.trello.card import CardAgent
     from app.agents.trello.checklist import ChecklistAgent
@@ -115,6 +116,7 @@ def create_default_bus(factory: Callable[[], dict[str, BaseAgent]] | None = None
             "search": SearchAgent(),
             "notification": NotificationAgent(),
             "attachment": AttachmentAgent(),
+            "batch": BatchAgent(),
         }
     for name, ag in agents.items():
         bus.register(name, ag)

@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 _compiled_graph: Any = None
 
 
+def route_after_router(state: ChatState) -> Literal["orchestrator", "bulk_orchestrator"]:
+    if (state.get("task_type") or "simple") == "bulk":
+        return "bulk_orchestrator"
+    return "orchestrator"
+
+
 def route_after_orchestrator(state: ChatState) -> Literal["plan_executor", "reflection", "clarify"]:
     if state.get("needs_clarification"):
         return "clarify"
@@ -56,11 +62,13 @@ def _build_graph():
 
     t = time.perf_counter()
     from app.core.nodes.answer_generator import answer_generator
+    from app.core.nodes.bulk_orchestrator_node import bulk_orchestrator_node
     from app.core.nodes.clarify import clarify_node
     from app.core.nodes.evaluation import evaluation
     from app.core.nodes.orchestrator_node import orchestrator_node
     from app.core.nodes.plan_executor import plan_executor_node
     from app.core.nodes.reflection import reflection_node
+    from app.core.nodes.router_node import router_node
 
     logger.info(
         "[startup] imported A2A nodes in %.0fms (total %.0fms)",
@@ -70,16 +78,28 @@ def _build_graph():
 
     t = time.perf_counter()
     g = StateGraph(ChatState)
+    g.add_node("router", router_node)
     g.add_node("orchestrator", orchestrator_node)
+    g.add_node("bulk_orchestrator", bulk_orchestrator_node)
     g.add_node("plan_executor", plan_executor_node)
     g.add_node("answer_generator", answer_generator)
     g.add_node("evaluation", evaluation)
     g.add_node("reflection", reflection_node)
     g.add_node("clarify", clarify_node)
 
-    g.set_entry_point("orchestrator")
+    g.set_entry_point("router")
+    g.add_conditional_edges(
+        "router",
+        route_after_router,
+        {"orchestrator": "orchestrator", "bulk_orchestrator": "bulk_orchestrator"},
+    )
     g.add_conditional_edges(
         "orchestrator",
+        route_after_orchestrator,
+        {"plan_executor": "plan_executor", "reflection": "reflection", "clarify": "clarify"},
+    )
+    g.add_conditional_edges(
+        "bulk_orchestrator",
         route_after_orchestrator,
         {"plan_executor": "plan_executor", "reflection": "reflection", "clarify": "clarify"},
     )

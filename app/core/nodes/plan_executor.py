@@ -6,6 +6,8 @@ import logging
 import uuid
 from typing import Any
 
+import re
+
 from app.agents.base import A2AMessage, Plan, PlanStep, new_task_id, parse_ref, plan_to_dict
 from app.agents.bus import get_default_bus
 from app.governance.intent_taxonomy import normalize_intent_label
@@ -17,6 +19,7 @@ from app.utils.trello_summaries import slim_result_for_answer
 logger = logging.getLogger(__name__)
 
 _MAX_INSERT = 8
+_SLICE_REF_RE = re.compile(r"^\$([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\[:(\d+)\]$")
 
 
 def _memory_card_id(mem: dict[str, Any]) -> Any:
@@ -28,6 +31,10 @@ def _resolve_value(val: Any, results: dict[str, dict[str, Any]]) -> Any:
     if not isinstance(val, str):
         return val
     v = val.strip()
+    m = _SLICE_REF_RE.match(v)
+    if m:
+        lst = (results.get(m.group(1)) or {}).get(m.group(2))
+        return lst[:int(m.group(3))] if isinstance(lst, list) else lst
     pr = parse_ref(v)
     if pr:
         sid, field = pr
@@ -179,6 +186,8 @@ def _aggregate_parsed(plan: Plan, results: dict[str, dict[str, Any]]) -> dict[st
         if isinstance(slim.get("board"), dict):
             b = slim["board"]
             out["queried_board"] = {"id": b.get("id"), "name": b.get("name")}
+        if "board_summary" in slim:
+            out["board_summary"] = slim["board_summary"]
     return out
 
 
@@ -301,6 +310,75 @@ def plan_executor_node(state: ChatState) -> dict[str, Any]:
                 "intent": normalize_intent_label(plan.final_intent),
                 "selected_tool": "a2a_plan",
             }
+
+        # Expand _foreach: iterate a resolved collection, dispatch one A2A call per item.
+        if step.agent == "_foreach":
+            source = resolved.get("source")
+            if not isinstance(source, list):
+                return {
+                    "plan": plan_to_dict(plan),
+                    "plan_trace": all_trace,
+                    "plan_execution_status": "error",
+                    "error_message": (
+                        f"_foreach step {step.step_id}: 'source' must be a list, "
+                        f"got {type(source).__name__!r}. Check that the prior step returns a 'cards' field."
+                    ),
+                    "http_status": 422,
+                }
+            limit = resolved.get("limit")
+            if limit is not None:
+                try:
+                    source = source[:int(limit)]
+                except (TypeError, ValueError):
+                    pass
+            apply_agent = str(resolved.get("agent") or "")
+            apply_ask = str(resolved.get("ask") or "")
+            item_id_field = str(resolved.get("item_id_field") or "id")
+            # key_as: the input key name expected by the target agent (e.g. "card_id" for card ops)
+            key_as = str(resolved.get("key_as") or ("card_id" if apply_agent == "card" else item_id_field))
+            extra_inputs = dict(resolved.get("extra_inputs") or {})
+
+            fe_success: list[dict[str, Any]] = []
+            fe_errors: list[dict[str, Any]] = []
+            for item in source:
+                iid = item.get(item_id_field) if isinstance(item, dict) else str(item)
+                fe_ctx: dict[str, Any] = {
+                    "user_text": user_text,
+                    "memory": mem,
+                    "_resolved_inputs": {key_as: iid, **extra_inputs},
+                }
+                fe_msg = A2AMessage(
+                    task_id=new_task_id(), frm="executor", to=apply_agent, ask=apply_ask, context=fe_ctx
+                )
+                fe_resp = bus.dispatch(fe_msg)
+                if fe_resp.status == "ok":
+                    fe_success.append({key_as: iid, **(fe_resp.data or {})})
+                else:
+                    fe_errors.append({key_as: iid, "error": fe_resp.error or fe_resp.status})
+
+            logger.info(
+                "[plan] _foreach plan_id=%s step=%s agent=%s ask=%s items=%d ok=%d err=%d",
+                plan.plan_id, step.step_id, apply_agent, apply_ask,
+                len(source), len(fe_success), len(fe_errors),
+            )
+            all_trace.append({
+                "plan_id": plan.plan_id,
+                "step_id": step.step_id,
+                "agent": step.agent,
+                "ask": step.ask,
+                "status": "ok",
+                "foreach_count": len(source),
+                "success_count": len(fe_success),
+                "error_count": len(fe_errors),
+            })
+            plan.results[step.step_id] = {
+                "success_count": len(fe_success),
+                "error_count": len(fe_errors),
+                "results": fe_success[:50],
+                "errors": fe_errors[:20],
+            }
+            plan.current_index += 1
+            continue
 
         msg = A2AMessage(
             task_id=new_task_id(),
