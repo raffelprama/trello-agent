@@ -19,17 +19,17 @@ Also documented in [`../README.md`](../README.md).
 
 ## Logging
 
-[`../app/logging_setup.py`](../app/logging_setup.py):
+[`../app/observability/logging_setup.py`](../app/observability/logging_setup.py):
 
 - **`setup_logging`** — stderr stream, format `%(asctime)s | %(levelname)s | %(name)s | %(message)s`.
 - **`log_event(logger, request_id, event, **fields)`** — structured key=value lines for HTTP handlers.
-- **`new_request_id()`** — UUID for per-request correlation.
+- **`new_request_id()`** — UUID for per-request correlation (optional; HTTP handlers may use the client correlation id as `request_id`; see `main.py`).
 
 CLI **`--verbose`** sets `app.*` loggers to **DEBUG** for noisier startup and node detail.
 
 ## Payload hygiene
 
-[`../app/observability.py`](../app/observability.py):
+[`../app/observability/observability.py`](../app/observability/observability.py):
 
 - **`json_preview`**, **`text_preview`** — truncate serialized payloads using `LOG_MAX_BODY_CHARS` from config.
 - **`redact_query_params`** — masks `key`, `token`, `api_key`, `access_token` in dicts logged from Trello calls.
@@ -41,7 +41,7 @@ Described in [`../README.md`](../README.md) “Observability (stderr)”:
 | Prefix | Source |
 |--------|--------|
 | `[trello]` | Trello HTTP client (method, path, status, duration, size) |
-| `[llm]` | LLM invocations (`orchestrator_build_plan`, `answer_agent`, …) |
+| `[llm]` | LLM invocations (`router_classify`, `orchestrator_build_plan`, `bulk_orchestrator_build_plan`, `answer_agent`, …) |
 | `[a2a]` | AgentBus dispatch / reply |
 | `[plan]` | Plan build / step execution |
 | `[startup]` | LangGraph import and compile timing |
@@ -72,3 +72,4 @@ There is no graph edge that loops back from `evaluation` into the executor today
 
 - [02 — Node flows and routing](02_node_flows_and_routing.md)
 - [01 — Architecture and topology](01_architecture_and_topology.md)
+- [07 — Bulk, scaffold, summarize, done](07_bulk_scaffold_summarize_and_done.md)
