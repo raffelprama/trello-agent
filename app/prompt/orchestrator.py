@@ -12,6 +12,7 @@ PRD v3 intent hints (for final_intent naming): QUERY_BOARDS, QUERY_SEARCH, QUERY
 CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_SET_DUE_COMPLETE, CARD_CREATE, SUMMARIZE_BOARD, etc.
 
 - member: get_me | get_my_boards | get_member_cards | get_my_notifications | get_my_organizations | update_me | resolve_member
+  get_member_cards: inputs: optional member_id (default **me** for the signed-in user); optional **board_id** — when set, return only cards on that board (filtered via each card's idBoard). Optional Trello params: filter, fields. When the user names another person, resolve_member first, then pass member_id=$sN.member_id and board_id=$s0.board_id.
 - board: resolve_board | get_board | get_board_lists | get_board_cards | get_board_labels | get_board_members | get_board_actions | create_board | update_board | delete_board | get_board_custom_fields | add_board_member | remove_board_member | get_board_memberships | get_board_summary
 - list: resolve_list | get_list_cards | create_list | update_list | archive_list | set_list_closed | set_list_pos
 - card: resolve_card | get_card_details | create_card | update_card | move_card | delete_card | set_card_closed | remove_card_member | add_card_member | set_card_due | set_card_due_complete | get_card_custom_field_items | set_card_custom_field_item
@@ -50,6 +51,8 @@ CUSTOM_FIELD_SET, WEBHOOK_CREATE, CARD_MOVE, CARD_SET_DUE_COMPLETE, CARD_CREATE,
 Reference outputs from prior steps using "$STEP_ID.field" (e.g. "$s1.board_id", "$s2.list_id", "$s3.card_id"). **Checklist item ID:** prefer **$sN.check_item_id** after resolve_check_item (canonical); **checkitem_id** is also present on the same step result as an alias if needed.
 Typical flows:
 - "all cards on board X": resolve_board -> get_board_cards (board_id from $s0)
+- "cards on board X assigned to / with member [person]" / "which cards on [board] have [username]" / "under [board], cards for raffel6": **NOT** get_board_cards alone — resolve_board -> member resolve_member(board_id=$s0.board_id, member_hint=…) -> member get_member_cards(member_id=$s1.member_id, board_id=$s0.board_id). Do **not** list every card on the board when the user asked only for cards that include that assignee.
+- "my cards on board X" / "cards assigned to me on [board]": resolve_board -> member get_member_cards(board_id=$s0.board_id) (omit member_id or use "me")
 - "move card A to list B": resolve_board -> resolve_card(card_hint) -> resolve_list(list_hint) -> move_card(card_id, target_list_id from $list step)
 - "add card Title in List L": resolve_board -> resolve_list -> create_card(list_id, card_name)
 - "find cards about onboarding": search (query in inputs_json)
@@ -124,6 +127,8 @@ Checklist vs card completion (analyzer must not conflate):
 - If the user names a **checklist** and/or a **checklist item** / checkbox / "checklist item" / "subtask" line on a card → they mean **checklist check items** (suggested_final_intent like CHECKLIST_ITEM_SET), **not** CARD_SET_DUE_COMPLETE. Phrases like "set checklist to true" on an **item** are checklist state, not the due-date checkmark.
 - CARD_SET_DUE_COMPLETE applies only when they mean the card's **due date is finished** (dueComplete), without targeting a named checklist line.
 
+Cards filtered by assignee on a board: If the user asks which cards on a **named board** have / include / are assigned to a **specific member** (username or person name), set **required_entities** to include **board** and **member** and describe in reasoning that the assistant should list that member's cards **restricted to that board** (not all board cards). suggested_final_intent e.g. QUERY_BOARD_CARDS_BY_MEMBER.
+
 The session memory block begins with a reference time (UTC, optional local). Use it when the user says "tomorrow", "today", "overdue", or relative deadlines — reflect that in analysis and reasoning.
 """
 
@@ -152,6 +157,7 @@ User message:
 - Each step's inputs_json field must be a valid JSON object serialized as a string; when a step has no inputs, set inputs_json to {{}} (empty JSON object).
 - Due dates: if the user says "tomorrow", "next Friday", etc., convert to ISO 8601 UTC for `due` on create_card / set_card_due using the reference time at the top of session memory.
 - Overdue / late / past-due questions: include a read step that returns cards with `due` and `dueComplete` (e.g. get_board_cards), then the answer can compare each card to reference UTC; do not assume overdue without that data.
+- **Cards on a board assigned to a specific member:** resolve_board -> resolve_member(member_hint) -> get_member_cards(member_id=$s1.member_id, board_id=$s0.board_id). Do **not** use get_board_cards for that intent — it returns all cards and drops assignee info.
 - Context: if the user just viewed or discussed one card and now says "update the description", "set due", etc. without naming a card, reuse that same card: `resolve_card` with an empty `card_hint` is OK (session memory supplies focus), or reference the prior step's `card_id`. Do not switch to a different card from a bulk list unless the user names it.
 """
 

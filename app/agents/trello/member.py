@@ -133,11 +133,23 @@ class MemberAgent(BaseAgent):
             if not isinstance(ri, dict):
                 ri = {}
             mid = ri.get("member_id") or "me"
+            board_id = ri.get("board_id")
             params = {k: v for k, v in ri.items() if k in ("filter", "fields")}
+            if board_id and "fields" not in params:
+                params["fields"] = "id,name,idBoard,idList,due,dueComplete"
             st, cards = member_tools.get_member_cards(str(mid), **params)
             if st >= 400:
                 return A2AResponse(task_id=msg.task_id, frm=self.name, status="error", data={}, error=f"HTTP {st}")
-            return A2AResponse(task_id=msg.task_id, frm=self.name, status="ok", data={"cards": cards})
+            rows = [c for c in cards if isinstance(c, dict)]
+            if board_id:
+                bid = str(board_id)
+                rows = [c for c in rows if str(c.get("idBoard") or "") == bid]
+            return A2AResponse(
+                task_id=msg.task_id,
+                frm=self.name,
+                status="ok",
+                data={"cards": rows, "board_id": board_id} if board_id else {"cards": rows},
+            )
 
         return A2AResponse(
             task_id=msg.task_id,
