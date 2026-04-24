@@ -69,8 +69,8 @@ After each successful turn, the graph updates **`memory`**, including:
 
 - **Scope:** `board_id`, `board_name`, `list_map`, `last_cards`, `last_card_id`, `last_mentioned_card_id`, `last_mentioned_list_id`
 - **v3 maps:** `custom_field_map`, `webhook_map` (from aggregated plan results)
-- **Settings:** `settings.confirm_mutations` (default **true** — destructive steps prompt once per plan), `settings.dry_run` (skip mutating HTTP; return partial trace), `settings.timezone`, `settings.default_board`
-- **Flow:** `pending_clarify`, **`pending_plan`** (serialized Plan DAG + optional `awaiting_destructive_confirm`) for clarification / destructive confirmation — the next turn **resumes** via `orchestrator_resume_plan` or the destructive-confirm short path in `orchestrator_node`.
+- **Settings:** `settings.confirm_mutations` (default **true** — destructive steps prompt once per plan), `settings.confirm_duplicate_creations` (default **true** — before `create_card` / `batch.create_cards` / `scaffold.build_task_scaffold`, pause if new titles are similar to existing cards on the target list/board), `settings.dry_run` (skip mutating HTTP; return partial trace), `settings.timezone`, `settings.default_board`
+- **Flow:** `pending_clarify`, **`pending_plan`** (serialized Plan DAG + optional `awaiting_destructive_confirm` or `awaiting_duplicate_creation_confirm`) for clarification / confirmations — the next turn **resumes** via `orchestrator_resume_plan` or the short paths in `orchestrator_node`.
 
 Pass **`memory.settings`** (and the maps above) on `POST /chat` to tune behavior without code changes.
 
@@ -78,6 +78,8 @@ Pass **`memory.settings`** (and the maps above) on `POST /chat` to tune behavior
 
 - **Dry run:** set `memory.settings.dry_run` to **true** — the executor stops before the first **mutating** step and returns a trace with `dry_run_stopped_at` (see `app/plan_governance.py`).
 - **Destructive confirm:** when `confirm_mutations` is true, steps such as `delete_card`, `delete_board`, `delete_webhook`, etc. require a **yes-style** reply before the plan continues; HTTP trace entries include **`method` / `path` / `status`** per Trello call where available (`trace.plan_trace` in the API).
+- **Duplicate-creation confirm:** when `confirm_duplicate_creations` is true, the executor compares planned new card titles (or scaffold **topic**) to existing cards on the target list/board before the first create/scaffold step; reply **yes** / **proceed** to continue or anything else to abandon and get a fresh plan. Set `memory.settings.confirm_duplicate_creations` to **false** to skip this gate.
+- **Prefetch:** with `SESSION_PREFETCH=true`, **`open_boards_preview`** is included in the planner prompt so board names like **Test** resolve more reliably when the user types a close variant.
 - **Idempotency:** `move_card` and `set_checkitem_state` skip duplicate writes when state already matches (unless `skip_idempotency_check` is set in inputs).
 
 ## Tests

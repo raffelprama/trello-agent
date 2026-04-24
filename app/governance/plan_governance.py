@@ -78,6 +78,17 @@ DESTRUCTIVE_STEPS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
+# Creation / bulk-add — duplicate-risk gate before first such step per plan (optional confirm).
+CREATION_STEPS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("card", "create_card"),
+        ("batch", "create_cards"),
+        ("scaffold", "build_task_scaffold"),
+        ("list", "create_list"),
+        ("checklist", "create_checklist"),
+    }
+)
+
 
 def step_key(agent: str, ask: str) -> tuple[str, str]:
     return (agent.strip().lower(), ask.strip().lower())
@@ -89,6 +100,10 @@ def is_mutating(agent: str, ask: str) -> bool:
 
 def is_destructive(agent: str, ask: str) -> bool:
     return step_key(agent, ask) in DESTRUCTIVE_STEPS
+
+
+def is_creation_step(agent: str, ask: str) -> bool:
+    return step_key(agent, ask) in CREATION_STEPS
 
 
 def plan_has_destructive(plan_steps: list[Any]) -> bool:
@@ -103,7 +118,12 @@ def plan_has_destructive(plan_steps: list[Any]) -> bool:
 
 
 _CONFIRM_RE = re.compile(
-    r"^\s*(yes|yep|yeah|y|confirm|confirmed|ok|okay|proceed|go ahead|do it)\s*[.!]?\s*$",
+    r"^\s*(yes|yep|yeah|y|confirm|confirmed|ok|okay|proceed|go ahead|do it|create anyway|continue)\s*[.!]?\s*$",
+    re.I,
+)
+
+_REJECT_PLAN_RE = re.compile(
+    r"^\s*(no|nope|nah|stop|cancel|abort|don\'t|do not|skip)\b",
     re.I,
 )
 
@@ -115,6 +135,18 @@ def user_confirms_destructive(user_text: str) -> bool:
     if _CONFIRM_RE.match(t):
         return True
     return False
+
+
+def user_confirms_duplicate_creation(user_text: str) -> bool:
+    """User explicitly allows create despite similar existing cards (same accept patterns as destructive)."""
+    return user_confirms_destructive(user_text)
+
+
+def user_rejects_duplicate_creation(user_text: str) -> bool:
+    t = (user_text or "").strip()
+    if not t:
+        return False
+    return bool(_REJECT_PLAN_RE.match(t))
 
 
 def effective_dry_run(memory: dict[str, Any] | None, state_override: bool | None = None) -> bool:
@@ -134,4 +166,13 @@ def effective_confirm_mutations(memory: dict[str, Any] | None) -> bool:
     s = memory.get("settings")
     if isinstance(s, dict) and "confirm_mutations" in s:
         return bool(s.get("confirm_mutations"))
+    return True
+
+
+def effective_confirm_duplicate_creations(memory: dict[str, Any] | None) -> bool:
+    if not memory:
+        return True
+    s = memory.get("settings")
+    if isinstance(s, dict) and "confirm_duplicate_creations" in s:
+        return bool(s.get("confirm_duplicate_creations"))
     return True

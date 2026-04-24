@@ -8,7 +8,7 @@ from typing import Any
 
 from app.agents.base import A2AMessage, A2AResponse, BaseAgent
 from app.core.config import BOARD_SCOPE_ONLY, TRELLO_BOARD_ID
-from app.utils.resolution import match_dicts_by_name
+from app.utils.resolution import close_name_matches, match_dicts_by_name
 from app.utils.trello_summaries import slim_board, slim_boards
 from app.tools import board as board_tools
 from app.tools import member as member_tools
@@ -464,7 +464,8 @@ class BoardAgent(BaseAgent):
                 clarification="Which board do you mean? " + ", ".join(f"{c.get('name')}" for c in cand[:8] if c.get("name")),
             )
 
-        match = _best_name_match(name_guess, [b for b in boards if isinstance(b, dict)])
+        board_dicts = [b for b in boards if isinstance(b, dict)]
+        match = _best_name_match(name_guess, board_dicts)
         if match:
             sm = slim_board(match) or {}
             return A2AResponse(
@@ -476,6 +477,27 @@ class BoardAgent(BaseAgent):
                     "board": sm,
                     "resolved_board_name": match.get("name"),
                 },
+            )
+
+        close = close_name_matches(
+            name_guess,
+            board_dicts,
+            get_name=lambda b: str(b.get("name", "")),
+            max_levenshtein=2,
+            max_results=8,
+        )
+        if close:
+            cand = [{"id": b.get("id"), "name": b.get("name")} for b in close if b.get("id")]
+            names = ", ".join(str(c.get("name")) for c in cand if c.get("name"))
+            return A2AResponse(
+                task_id=msg.task_id,
+                frm=self.name,
+                status="clarify_user",
+                data={"candidates": cand, "hint": name_guess},
+                clarification=(
+                    f"No exact match for {name_guess!r}. Did you mean one of these boards? {names} "
+                    "(reply with the board name.)"
+                ),
             )
 
         cand = [{"id": b.get("id"), "name": b.get("name")} for b in boards[:30] if isinstance(b, dict)]

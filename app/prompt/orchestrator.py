@@ -111,6 +111,8 @@ Done vs complete (not checklist items; card-level dueComplete only):
 - If there is no Done list in session memory, prefer CARD_SET_DUE_COMPLETE for vague "done" phrasing; needs_intent_clarification=false.
 - If **pending_clarification** in session memory is about move-vs-mark and the user replies with mark/complete/due/checkmark wording, set CARD_SET_DUE_COMPLETE and needs_intent_clarification=false.
 
+Board naming: if session memory includes a line **boards you have access to (…)**, use an **exact** name from that list for board resolution hints (e.g. user says "board test" → prefer board_hint **Test** if listed), not a guessed variant.
+
 The session memory block begins with a reference time (UTC, optional local). Use it when the user says "tomorrow", "today", "overdue", or relative deadlines — reflect that in analysis and reasoning.
 """
 

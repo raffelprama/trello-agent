@@ -35,8 +35,10 @@ def router_node(state: ChatState) -> dict[str, Any]:
     mem: dict[str, Any] = state.get("memory") or {}
     pending = mem.get("pending_plan")
 
-    # Pure state routing — resume and destructive-confirm paths need no LLM
+    # Pure state routing — resume and confirm paths need no LLM
     if isinstance(pending, dict) and pending.get("awaiting_destructive_confirm"):
+        return {"task_type": "simple"}
+    if isinstance(pending, dict) and pending.get("awaiting_duplicate_creation_confirm"):
         return {"task_type": "simple"}
     if isinstance(pending, dict) and pending.get("plan"):
         return {"task_type": "simple"}

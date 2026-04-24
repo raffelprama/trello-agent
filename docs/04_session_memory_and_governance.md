@@ -50,6 +50,8 @@ When specialists return `clarify_user` or the executor requests **destructive co
 | **`DELETE_ITEM`** in `.env` | Default `false`; blocks permanent card deletion at the tool layer until enabled ([`../app/core/config.py`](../app/core/config.py), README). |
 | **`memory.settings.dry_run`** | Skip mutating HTTP; executor returns early with trace (`dry_run_stopped_at`). |
 | **`memory.settings.confirm_mutations`** | When true, destructive steps require a yes-style confirmation per plan. |
+| **`memory.settings.confirm_duplicate_creations`** | When true (default), before `create_card`, `batch.create_cards`, or `scaffold.build_task_scaffold`, the executor may pause with **`awaiting_duplicate_creation_confirm`** if new titles are similar to existing cards; reply yes/proceed to continue. |
+| **`SESSION_PREFETCH`** | When true, first-turn prefetch fills **`open_boards_preview`**, which is echoed in the planner memory summary to improve board name disambiguation. |
 
 Idempotency and other protocol details: [`../README.md`](../README.md) “Reasoning / governance” and [`prd_v3.md`](prd_v3.md) §14.
 

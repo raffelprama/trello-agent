@@ -62,3 +62,36 @@ def match_dicts_by_name(
     name_key: str = "name",
 ) -> dict[str, Any] | None:
     return best_match_by_name(name_hint, [d for d in dicts if isinstance(d, dict)], get_name=lambda d: str(d.get(name_key, "")))
+
+
+def close_name_matches(
+    name_hint: str,
+    rows: list[T],
+    *,
+    get_name: Callable[[T], str],
+    max_levenshtein: int = 2,
+    max_results: int = 5,
+) -> list[T]:
+    """All rows within Levenshtein distance of hint (sorted by distance, then name). No unique-candidate rule."""
+    if not name_hint or not rows:
+        return []
+    nh = " ".join(name_hint.strip().lower().split())
+    scored: list[tuple[int, str, T]] = []
+    for r in rows:
+        n = " ".join(get_name(r).strip().lower().split())
+        if not n:
+            continue
+        d = levenshtein(nh, n)
+        if d <= max_levenshtein:
+            scored.append((d, n, r))
+    scored.sort(key=lambda x: (x[0], x[1]))
+    out: list[T] = []
+    seen_names: set[str] = set()
+    for _d, n, r in scored:
+        if n in seen_names:
+            continue
+        seen_names.add(n)
+        out.append(r)
+        if len(out) >= max_results:
+            break
+    return out

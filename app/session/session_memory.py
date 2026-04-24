@@ -21,11 +21,13 @@ def empty_memory() -> dict[str, Any]:
         "webhook_map": [],  # [{id, description, idModel}]
         "settings": {
             "confirm_mutations": True,
+            "confirm_duplicate_creations": True,
             "dry_run": False,
             "timezone": None,
             "default_board": None,
         },
         "destructive_confirmed_for_plan": None,
+        "duplicate_creation_confirmed_for_plan": None,
         "pending_clarify": None,
         "pending_plan": None,  # {plan: dict, ...} — A2A resume
     }
@@ -62,6 +64,11 @@ def memory_summary_for_planner(mem: dict[str, Any] | None) -> str:
     if isinstance(lm, list) and lm:
         names = [str(x.get("name", "")) for x in lm if isinstance(x, dict)][:20]
         lines.append(f"lists on board: {', '.join(names)}")
+    obp = mem.get("open_boards_preview")
+    if isinstance(obp, list) and obp:
+        bnames = [str(x.get("name", "")) for x in obp if isinstance(x, dict) and x.get("name")][:25]
+        if bnames:
+            lines.append(f"boards you have access to (use exact names in board_hint when resolving): {', '.join(bnames)}")
     lc = mem.get("last_cards")
     if isinstance(lc, list) and lc:
         for i, c in enumerate(lc[:30]):
@@ -85,8 +92,9 @@ def memory_summary_for_planner(mem: dict[str, Any] | None) -> str:
     st = mem.get("settings")
     if isinstance(st, dict):
         lines.append(
-            f"settings: confirm_mutations={st.get('confirm_mutations')} dry_run={st.get('dry_run')} "
-            f"timezone={st.get('timezone')!r}",
+            f"settings: confirm_mutations={st.get('confirm_mutations')} "
+            f"confirm_duplicate_creations={st.get('confirm_duplicate_creations', True)} "
+            f"dry_run={st.get('dry_run')} timezone={st.get('timezone')!r}",
         )
     pp = mem.get("pending_plan")
     if isinstance(pp, dict) and pp.get("plan"):
@@ -103,6 +111,10 @@ def memory_summary_for_planner(mem: dict[str, Any] | None) -> str:
             lines.append(f"pending_clarification: asked which card from [{names}]")
         elif amb.get("kind") == "card_name_missing":
             lines.append("pending_clarification: asked user to provide the card name")
+        elif amb.get("kind") == "duplicate_creation_confirm":
+            lines.append(
+                "pending_clarification: similar existing cards — user must confirm proceed or cancel to avoid duplicates",
+            )
         else:
             lines.append(
                 f"pending_clarification: {pc.get('kind')!r} — {str(pc.get('question', ''))[:120]}"
@@ -293,6 +305,7 @@ def finalize_turn_memory(prev: dict[str, Any] | None, out: dict[str, Any]) -> di
         m = clear_pending_clarify(merge_memory(base, upd))
         m["pending_plan"] = None
         m.pop("destructive_confirmed_for_plan", None)
+        m.pop("duplicate_creation_confirmed_for_plan", None)
         return m
 
     return base

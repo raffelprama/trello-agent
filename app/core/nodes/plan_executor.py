@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any
@@ -11,9 +12,19 @@ import re
 from app.agents.base import A2AMessage, Plan, PlanStep, new_task_id, parse_ref, plan_to_dict
 from app.agents.bus import get_default_bus
 from app.governance.intent_taxonomy import normalize_intent_label
-from app.governance.plan_governance import effective_confirm_mutations, effective_dry_run, is_destructive, is_mutating
+from app.governance.plan_governance import (
+    effective_confirm_duplicate_creations,
+    effective_confirm_mutations,
+    effective_dry_run,
+    is_creation_step,
+    is_destructive,
+    is_mutating,
+)
 from app.core.state import ChatState
 from app.services.trello_client import get_client
+from app.tools import board as board_tools
+from app.tools import list_ops as list_tools
+from app.utils.resolution import levenshtein
 from app.utils.trello_summaries import slim_result_for_answer
 
 logger = logging.getLogger(__name__)
@@ -200,6 +211,139 @@ def _destructive_confirm_question(step: PlanStep) -> str:
     )
 
 
+def _norm_creation_name(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def _creation_pair_conflict(planned: str, existing: str) -> bool:
+    pn, en = _norm_creation_name(planned), _norm_creation_name(existing)
+    if not pn or not en:
+        return False
+    if pn == en:
+        return True
+    shorter = min(len(pn), len(en))
+    if shorter >= 3 and (pn in en or en in pn):
+        return True
+    lim = 2 if shorter >= 4 else 1
+    return levenshtein(pn, en) <= lim
+
+
+def _topic_conflicts_scaffold(topic: str, existing_card_name: str) -> bool:
+    if _creation_pair_conflict(topic, existing_card_name):
+        return True
+    tn, en = _norm_creation_name(topic), _norm_creation_name(existing_card_name)
+    if not tn or not en:
+        return False
+    if levenshtein(tn, en) <= 3:
+        return True
+    for w in re.split(r"[^\w]+", tn):
+        if len(w) >= 4 and w in en:
+            return True
+    return False
+
+
+def _resolve_list_and_board_for_cards(
+    resolved: dict[str, Any],
+    plan: Plan,
+    mem: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    list_id = resolved.get("list_id")
+    board_id = resolved.get("board_id")
+    if list_id:
+        lid = str(list_id).strip()
+        bid = str(board_id).strip() if board_id else ""
+        if not bid:
+            for data in reversed(list(plan.results.values())):
+                if isinstance(data, dict) and data.get("board_id"):
+                    bid = str(data["board_id"])
+                    break
+        if not bid and mem.get("board_id"):
+            bid = str(mem.get("board_id"))
+        return lid, bid or None
+    if board_id:
+        return None, str(board_id).strip()
+    lid, bid = None, None
+    for data in reversed(list(plan.results.values())):
+        if not isinstance(data, dict):
+            continue
+        if not lid and data.get("list_id"):
+            lid = str(data["list_id"])
+        if not bid and data.get("board_id"):
+            bid = str(data["board_id"])
+    if not bid and mem.get("board_id"):
+        bid = str(mem.get("board_id"))
+    return lid, bid
+
+
+def _existing_card_titles(list_id: str | None, board_id: str | None) -> list[str]:
+    cards: list[dict[str, Any]] = []
+    if list_id:
+        st, raw = list_tools.get_list_cards(str(list_id))
+        if st < 400 and isinstance(raw, list):
+            cards = [c for c in raw if isinstance(c, dict)]
+    elif board_id:
+        st, raw = board_tools.get_board_cards(str(board_id))
+        if st < 400 and isinstance(raw, list):
+            cards = [c for c in raw if isinstance(c, dict)]
+    return [str(c.get("name", "")) for c in cards if c.get("name")]
+
+
+def _planned_names_from_resolved(step: PlanStep, resolved: dict[str, Any]) -> list[str]:
+    a, k = step.agent.strip().lower(), step.ask.strip().lower()
+    if a == "batch" and k == "create_cards":
+        raw = resolved.get("names")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                raw = [n.strip() for n in raw.split(",") if n.strip()]
+        return [str(x).strip() for x in (raw or []) if str(x).strip()]
+    if a == "card" and k == "create_card":
+        n = resolved.get("card_name") or resolved.get("name")
+        return [str(n).strip()] if n and str(n).strip() else []
+    if a == "scaffold" and k == "build_task_scaffold":
+        topic = resolved.get("topic") or resolved.get("task_topic") or ""
+        return [str(topic).strip()] if str(topic).strip() else []
+    return []
+
+
+def _duplicate_creation_conflicts(
+    step: PlanStep,
+    resolved: dict[str, Any],
+    plan: Plan,
+    mem: dict[str, Any],
+) -> list[dict[str, Any]]:
+    lid, bid = _resolve_list_and_board_for_cards(resolved, plan, mem)
+    existing = _existing_card_titles(lid, bid)
+    if not existing:
+        return []
+    sk = (step.agent.strip().lower(), step.ask.strip().lower())
+    out: list[dict[str, Any]] = []
+    if sk == ("scaffold", "build_task_scaffold"):
+        topic = str(resolved.get("topic") or resolved.get("task_topic") or "").strip()
+        if not topic:
+            return []
+        for en in existing:
+            if _topic_conflicts_scaffold(topic, en):
+                out.append({"planned": topic, "existing": en, "note": "topic_similarity"})
+        return out
+    for p in _planned_names_from_resolved(step, resolved):
+        for e in existing:
+            if _creation_pair_conflict(p, e):
+                out.append({"planned": p, "existing": e, "note": "name_similarity"})
+    return out
+
+
+def _duplicate_creation_question(conflicts: list[dict[str, Any]], step: PlanStep) -> str:
+    lines = [
+        f"Creating via {step.agent}.{step.ask} may duplicate existing work. Similar cards already on this board/list:",
+    ]
+    for c in conflicts[:8]:
+        lines.append(f"  — new: {c.get('planned')!r} vs existing: {c.get('existing')!r}")
+    lines.append("Reply **yes** or **proceed** to create anyway, or **no** / **cancel** to stop.")
+    return "\n".join(lines)
+
+
 def plan_executor_node(state: ChatState) -> dict[str, Any]:
     plan_dict = state.get("plan")
     if not isinstance(plan_dict, dict):
@@ -285,6 +429,29 @@ def plan_executor_node(state: ChatState) -> dict[str, Any]:
                     "pending_plan_payload": {"plan": plan_to_dict(plan), "awaiting_destructive_confirm": True},
                     "http_status": 200,
                     "parsed_response": {"clarification": True, "question": q},
+                }
+
+        if (
+            is_creation_step(step.agent, step.ask)
+            and effective_confirm_duplicate_creations(mem if isinstance(mem, dict) else None)
+            and str(mem.get("duplicate_creation_confirmed_for_plan") or "") != str(plan.plan_id)
+        ):
+            dup_conf = _duplicate_creation_conflicts(step, resolved, plan, mem if isinstance(mem, dict) else {})
+            if dup_conf:
+                qd = _duplicate_creation_question(dup_conf, step)
+                return {
+                    "plan": plan_to_dict(plan),
+                    "plan_trace": all_trace,
+                    "needs_clarification": True,
+                    "clarification_question": qd,
+                    "ambiguous_entities": {"kind": "duplicate_creation_confirm", "conflicts": dup_conf},
+                    "plan_execution_status": "clarify",
+                    "pending_plan_payload": {
+                        "plan": plan_to_dict(plan),
+                        "awaiting_duplicate_creation_confirm": True,
+                    },
+                    "http_status": 200,
+                    "parsed_response": {"clarification": True, "question": qd},
                 }
 
         dry = effective_dry_run(mem if isinstance(mem, dict) else None)
