@@ -15,6 +15,25 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
+def _extract_card_hint_from_checklist_message(user_text: str) -> str:
+    """If the user ties a card title to checklist wording, prefer that title over a mistaken long item string."""
+    if not user_text or "checklist" not in user_text.lower():
+        return ""
+    patterns = (
+        r'on\s+the\s+card\s+["\']([^"\']+)["\']',
+        r'on\s+card\s+["\']([^"\']+)["\']',
+        r'card\s+["\']([^"\']+)["\'][^"\']{0,120}checklist',
+        r'checklist[^;]{0,240}on\s+(?:the\s+)?card\s+["\']([^"\']+)["\']',
+    )
+    for pat in patterns:
+        m = re.search(pat, user_text, re.I | re.DOTALL)
+        if m:
+            s = m.group(1).strip()
+            if len(s) >= 2:
+                return s
+    return ""
+
+
 def _card_name_matches_hint(name_hint: str, card_name: str) -> bool:
     """
     Match card title to user hint without substring hits inside unrelated words
@@ -339,6 +358,10 @@ class CardAgent(BaseAgent):
         board_id = ins.get("board_id") or mem.get("board_id")
         hint = ins.get("card_hint") or ins.get("card_name") or ins.get("name") or ""
         uid = (msg.context or {}).get("user_text") or ""
+
+        extracted_card = _extract_card_hint_from_checklist_message(uid)
+        if extracted_card and (not hint or len(str(hint)) > 120):
+            hint = extracted_card
 
         if not board_id:
             return A2AResponse(task_id=msg.task_id, frm=self.name, status="need_info", data={}, missing=["board_id"])

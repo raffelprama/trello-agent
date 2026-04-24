@@ -42,9 +42,10 @@ def _wants_board_catalog(text: str) -> bool:
         t,
     ):
         return True
-    # "list/show me all the board(s)", "see all the board"
+    # "see/show all boards" — require plural **boards** so "see all lists under board 'X'"
+    # does not match (avoids returning a board catalog instead of resolving board X).
     if re.search(
-        r"\b(list|show|display|see|view)\b.*\b(all|every)\b.*\bboards?\b",
+        r"\b(list|show|display|see|view)\b.*\b(all|every)\b.*\bboards\b",
         t,
     ):
         return True

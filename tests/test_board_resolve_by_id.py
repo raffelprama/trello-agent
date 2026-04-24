@@ -93,6 +93,35 @@ def test_resolve_board_list_intent_returns_boards_not_clarify(monkeypatch: pytes
     assert "HRGA" in names and "AXA Agency" in names
 
 
+def test_resolve_board_lists_on_named_board_not_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """'see all lists under board Test' must resolve board Test, not return all boards."""
+    boards = [
+        {"id": "69688f0f940d3f5c7e2062ca", "name": "Test", "closed": False, "shortUrl": "https://x/t"},
+        {"id": "other", "name": "HRGA", "closed": False, "shortUrl": "https://x/h"},
+    ]
+    monkeypatch.setattr("app.agents.trello.board.member_tools.get_my_boards", lambda: (200, boards))
+    monkeypatch.setattr("app.agents.trello.board.BOARD_SCOPE_ONLY", False)
+    monkeypatch.setattr("app.agents.trello.board.TRELLO_BOARD_ID", "")
+
+    agent = BoardAgent()
+    msg = A2AMessage(
+        task_id=new_task_id(),
+        frm="test",
+        to="board",
+        ask="resolve_board",
+        context={
+            "_resolved_inputs": {"board_hint": ""},
+            "memory": {},
+            "user_text": "i want to see all lists under board 'Test'",
+        },
+    )
+    r = agent.handle(msg)
+    assert r.status == "ok"
+    assert r.data.get("board_id") == "69688f0f940d3f5c7e2062ca"
+    assert r.data.get("resolved_board_name") == "Test"
+    assert r.data.get("board_count") is None
+
+
 @pytest.mark.parametrize(
     "user_phrase",
     [

@@ -18,6 +18,8 @@ Allowed agents for bulk tasks (inputs are short hints or $step_id.field refs onl
 
 Reference: "$s0.board_id", "$s1.list_id", "$s1.cards"
 
+Do **not** use bulk/foreach flows for a **single** checklist checkbox on **one** card — those need the main planner (resolve_checklist → resolve_check_item → set_checkitem_state).
+
 Common bulk flows:
 - "add N cards named X1…XN to [list]":
     resolve_board → resolve_list → batch.create_cards(list_id=$s1.list_id, names=["X1","X2",...])
