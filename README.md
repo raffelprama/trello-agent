@@ -1,4 +1,49 @@
-# Trello AI Agent (LangGraph + FastAPI) — PRD v3
+# Trello AI Agent
+
+Talk to your Trello boards in plain language. A LangGraph agent turns requests like *"move the onboarding card to Done and add a checklist"* into a plan of Trello REST API calls, runs it, and answers in natural language.
+
+**Highlights**
+
+- **Plan, then act:** a router picks a simple or bulk planner; the orchestrator LLM builds a step DAG that specialist agents execute over an internal A2A bus.
+- **Broad Trello coverage:** boards, lists, cards, checklists, comments, labels, members, custom fields, webhooks, search and more (Trello REST API v1).
+- **Recovers and asks:** a reflection step handles failed steps; the agent asks a short clarification when a name could be a list or a card.
+- **Guardrails:** card deletion is off by default (`DELETE_ITEM`), work can be scoped to one board (`BOARD_SCOPE_ONLY`), and `dry_run`/confirm come from session settings.
+- **Observable and tested:** structured `[plan]`, `[a2a]`, `[llm]` and `[trello]` logs on stderr; pytest suite under `tests/`.
+- **Two entry points:** FastAPI `POST /chat` (stateless, memory passed in) and a CLI REPL.
+
+**How a request flows**
+
+```mermaid
+flowchart LR
+    Q[User request] --> R[router]
+    R -->|simple| O[orchestrator: plan DAG]
+    R -->|bulk| B[bulk orchestrator]
+    O --> P[plan executor]
+    B --> P
+    P -->|A2A dispatch| S[specialist agents]
+    S --> T[(Trello REST API)]
+    P -->|ok| A[answer + evaluation]
+    P -->|error| F[reflection]
+    O -->|ambiguous| C[clarify]
+```
+
+**Quickstart**
+
+```bash
+git clone https://github.com/raffelprama/trello-agent.git && cd trello-agent
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# create .env with TRELLO_API_KEY, TRELLO_API_TOKEN and API_KEY (see Setup below)
+python cli.py --trace
+```
+
+Then try: `What boards do I have?` or `Move card X to Done`.
+
+Detailed design docs live in [`docs/`](docs/) (architecture, node routing, plans and agents, session memory, observability).
+
+---
+
+## Details
 
 Production-style agent that maps natural language to **Trello REST API v1** calls across **boards, lists, cards, checklists, check items, comments, labels, members, custom fields, webhooks, organizations, search, notifications, URL attachments**, and related surfaces. The product specification is **`prd_v3.md`** (supersedes `prd_v2.md` for new work). The stack is **LangGraph**, **OpenAI** (`MODEL` in `.env`), and **session working memory** (CLI and optional `memory` on `POST /chat`) so follow-ups resolve **boards, lists, and cards** using prior context, **Levenshtein-aware name matching** (see `app/resolution.py`), and orchestrator **intent hints** (`app/intent_taxonomy.py`).
 
